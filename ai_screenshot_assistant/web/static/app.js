@@ -32,6 +32,16 @@
   const chunkSizeKey = "answerChunk:size";
   let chunkIndex = 0;
   let chunkSourceText = "";
+  const codeWrapToggle = document.getElementById("code-wrap");
+  const codeFontSelect = document.getElementById("code-font");
+  const codePanToggle = document.getElementById("code-autopan");
+  const CODE_VIEW_KEY = "codeView:settings";
+  let codeViewSettings = { wrap: true, font: "13", pan: true };
+  let panFrame = null;
+  let panLast = 0;
+  let panPauseUntil = 0;
+  let panDirection = 1;
+  let panXDirection = 1;
   const modelHint = document.getElementById("model-hint");
   const modelRoute = document.getElementById("model-route");
   const cursorKey = `lastEventId:${sessionId || "missing"}`;
@@ -1134,6 +1144,134 @@
     chunkResetButton.addEventListener("click", resetChunks);
   }
 
+  function loadCodeViewSettings() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(CODE_VIEW_KEY) || "{}") || {};
+      if (typeof raw.wrap === "boolean") {
+        codeViewSettings.wrap = raw.wrap;
+      }
+      if (["11", "13", "16"].indexOf(String(raw.font)) >= 0) {
+        codeViewSettings.font = String(raw.font);
+      }
+      if (typeof raw.pan === "boolean") {
+        codeViewSettings.pan = raw.pan;
+      }
+    } catch (_) { /* 保留默认值 */ }
+  }
+
+  function saveCodeViewSettings() {
+    localStorage.setItem(CODE_VIEW_KEY, JSON.stringify(codeViewSettings));
+  }
+
+  function applyCodeViewSettings() {
+    document.body.classList.toggle("code-wrap", codeViewSettings.wrap);
+    document.documentElement.style.setProperty("--code-font-size", `${codeViewSettings.font}px`);
+    if (codeWrapToggle) {
+      codeWrapToggle.checked = codeViewSettings.wrap;
+    }
+    if (codeFontSelect) {
+      codeFontSelect.value = codeViewSettings.font;
+    }
+    if (codePanToggle) {
+      codePanToggle.checked = codeViewSettings.pan;
+    }
+  }
+
+  function pauseCodePan() {
+    panPauseUntil = performance.now() + 6000;
+  }
+
+  // 慢速巡览：答案框上下往复，代码块左右往复；手指/滚轮/按键会暂停 6 秒
+  function panTick(timestamp) {
+    panFrame = null;
+    if (!codeViewSettings.pan) {
+      return;
+    }
+    if (!panLast) {
+      panLast = timestamp;
+    }
+    const dt = Math.min(0.06, Math.max(0, (timestamp - panLast) / 1000));
+    panLast = timestamp;
+    if (dt > 0 && performance.now() >= panPauseUntil) {
+      const maxScroll = Math.max(0, outputEl.scrollHeight - outputEl.clientHeight);
+      if (maxScroll > 4) {
+        let next = outputEl.scrollTop + panDirection * 14 * dt;
+        if (next >= maxScroll - 1) {
+          next = maxScroll;
+          panDirection = -1;
+          panPauseUntil = timestamp + 1200;
+        } else if (next <= 1) {
+          next = 0;
+          panDirection = 1;
+          panPauseUntil = timestamp + 1200;
+        }
+        outputEl.scrollTop = next;
+        updateOutputPager();
+      }
+      const block = scrollableCodeBlock();
+      if (block) {
+        const maxLeft = Math.max(0, block.scrollWidth - block.clientWidth);
+        let nextLeft = block.scrollLeft + panXDirection * 10 * dt;
+        if (nextLeft >= maxLeft - 1) {
+          nextLeft = maxLeft;
+          panXDirection = -1;
+        } else if (nextLeft <= 1) {
+          nextLeft = 0;
+          panXDirection = 1;
+        }
+        block.scrollLeft = nextLeft;
+      }
+    }
+    panFrame = requestAnimationFrame(panTick);
+  }
+
+  function startCodePan() {
+    if (!codeViewSettings.pan) {
+      return;
+    }
+    stopAutoPaging();
+    if (panFrame === null) {
+      panLast = 0;
+      panFrame = requestAnimationFrame(panTick);
+    }
+  }
+
+  function stopCodePan() {
+    if (panFrame !== null) {
+      cancelAnimationFrame(panFrame);
+      panFrame = null;
+    }
+  }
+
+  if (codeWrapToggle) {
+    codeWrapToggle.addEventListener("change", function () {
+      codeViewSettings.wrap = codeWrapToggle.checked;
+      saveCodeViewSettings();
+      applyCodeViewSettings();
+    });
+  }
+  if (codeFontSelect) {
+    codeFontSelect.addEventListener("change", function () {
+      codeViewSettings.font = codeFontSelect.value;
+      saveCodeViewSettings();
+      applyCodeViewSettings();
+    });
+  }
+  if (codePanToggle) {
+    codePanToggle.addEventListener("change", function () {
+      codeViewSettings.pan = codePanToggle.checked;
+      saveCodeViewSettings();
+      if (codeViewSettings.pan) {
+        startCodePan();
+      } else {
+        stopCodePan();
+      }
+    });
+  }
+  loadCodeViewSettings();
+  applyCodeViewSettings();
+  startCodePan();
+
 
   document.getElementById("copy-direct").addEventListener("click", function () {
     copyAnswer(buffer, this);
@@ -1276,6 +1414,7 @@
     outputAutoEnabled.addEventListener("change", function () {
       saveAutoPageConfig();
       if (outputAutoEnabled.checked) {
+        stopCodePan();
         startAutoPaging();
       } else {
         stopAutoPaging();
@@ -1301,6 +1440,10 @@
   outputEl.addEventListener("wheel", stopAutoPaging, { passive: true });
   outputEl.addEventListener("touchstart", stopAutoPaging, { passive: true });
   outputEl.addEventListener("pointerdown", stopAutoPaging);
+  outputEl.addEventListener("wheel", pauseCodePan, { passive: true });
+  outputEl.addEventListener("touchstart", pauseCodePan, { passive: true });
+  outputEl.addEventListener("pointerdown", pauseCodePan);
+  document.addEventListener("keydown", pauseCodePan);
   document.addEventListener("keydown", handleAnswerShortcut);
   window.addEventListener("resize", updateOutputPager);
 
