@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI 搜题助手</title>
+    <link rel="stylesheet" href="/static/style.css?v=0.2.58" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <h1>AI 搜题助手</h1>
+        <span class="status" id="status">连接中</span>
+      </header>
+      <div class="model-routes">
+        <label class="model-label" for="model-route">模型</label>
+        <select id="model-route" aria-label="选择路线和模型">
+          <option value="doubao-seed-2-0-mini">豆包 Mini · doubao-seed-2-0-mini-260428</option>
+          <option value="doubao-seed-2-0-lite">豆包 Lite · doubao-seed-2-0-lite-260428</option>
+          <option value="doubao-seed-2-1-turbo">豆包 Turbo · doubao-seed-2-1-turbo-260628</option>
+          <option value="doubao-seed-2-1-pro">豆包 Pro · doubao-seed-2-1-pro-260915</option>
+          <option value="openrouter-qwen-235b">OpenRouter · qwen/qwen3-vl-235b-a22b-instruct</option>
+          <option value="openrouter-qwen-27b">OpenRouter · qwen/qwen3.8-27b</option>
+          <option value="openrouter-qwen-flash">OpenRouter · qwen/qwen3.8-flash</option>
+          <option value="openrouter-qwen-plus">OpenRouter Qwen Plus · qwen/qwen3.6-plus</option>
+          <option value="openrouter-glm">OpenRouter GLM · z-ai/glm-4.6v</option>
+          <option value="openrouter-minimax">OpenRouter MiniMax · minimax/minimax-m3</option>
+          <option value="openrouter-gpt-4o">OpenRouter GPT-4o · openai/gpt-4o</option>
+          <option value="openrouter-gpt-4-1">OpenRouter GPT-4.1 · openai/gpt-4.1</option>
+          <option value="deepseek-flash">DeepSeek 官方 · deepseek-flash</option>
+        </select>
+      </div>
+      <p class="model-hint" id="model-hint">OpenRouter / qwen/qwen3-vl-235b-a22b-instruct</p>
+      <div class="selection-status waiting" id="selection-status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="selection-message">左键长按 2 秒框选，或右键长按 2 秒全屏</span>
+      </div>
+      <button class="capture-button" id="fullscreen-button" type="button" disabled>截全屏</button>
+      <div class="output" id="output">等待电脑端发送题目…</div>
+      <div class="output-reader" id="output-reader">
+        <button class="reader-button" id="output-prev" type="button">上一页</button>
+        <span class="page-indicator" id="output-page">1 / 1</span>
+        <button class="reader-button" id="output-next" type="button">下一页</button>
+        <label class="output-auto">
+          <input id="output-auto-enabled" type="checkbox" /> 自动翻页
+          <input id="output-auto-seconds" type="number" min="3" max="120" step="1" value="10" /> 秒
+        </label>
+        <button class="reader-button" id="output-expand" type="button">放大</button>
+      </div>
+      <button class="clear-chat" id="copy-direct" type="button">复制答案</button>
+      <button class="clear-chat" id="clear-direct" type="button">清空内容</button>
+      <section class="chatbot" aria-label="截图对话">
+        <div class="chat-header">
+          <span>截图对话</span>
+          <button class="clear-chat" id="clear-chat-button" type="button">清空聊天</button>
+        </div>
+        <div class="chat-capture-hint">资料分析：滚动页面后点“截全屏（连拍）”2–5 次，再点发送，多张图会一起分析。</div>
+        <div class="chat-list" id="chat-list" aria-live="polite">
+          <div class="empty-chat">可以只截图不输入文字；多张截图会和可选文字一起发送给 AI。</div>
+        </div>
+        <div class="preview-panel" id="preview-panel" aria-live="polite">
+          <div class="preview-toolbar">
+            <div class="preview-count" id="preview-count">已截图：0张</div>
+            <div class="preview-actions">
+              <button class="save-album ghost" id="select-all-album" type="button">全选</button>
+              <button class="save-album" id="save-album-button" type="button" disabled>保存到相册</button>
+            </div>
+          </div>
+          <div class="preview-list" id="preview-list"></div>
+        </div>
+        <textarea
+          id="question-input"
+          rows="3"
+          placeholder="输入细节问题或追问"
+        ></textarea>
+        <div class="chat-actions">
+          <button class="capture-button compact" id="chat-capture-button" type="button" disabled>截全屏（连拍）</button>
+          <button class="capture-button secondary" id="ask-button" type="button" disabled>发送</button>
+        </div>
+      </section>
+    </main>
+    <div class="album-sheet" id="album-sheet" hidden>
+      <div class="album-sheet-card">
+        <p>长按图片，选择「添加到照片 / 存储图像」，不要选存储到文件。</p>
+        <div class="album-sheet-images" id="album-sheet-images"></div>
+        <button class="save-album" id="album-sheet-close" type="button">完成</button>
+      </div>
+    </div>
+    <script>window.SESSION_ID = "__SESSION_ID__";</script>
+    <script src="/static/app.js?v=0.2.58"></script>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+# 统一换行，避免 Windows 上提交的 CRLF 让 macOS 的 bash 报 $'\r'
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+*.exe binary
+*.dll binary
+*.icns binary
+*.ico binary
+*.png binary
+*.jpg binary
+*.webp binary
+*.docx binary
+*.xlsx binary
+*.pdf binary

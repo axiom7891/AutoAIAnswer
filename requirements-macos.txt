@@ -1,0 +1,4 @@
+# macOS 专用依赖（Windows 上不要安装）
+# mouse_listener 在 macOS 分支里直接用 AppKit/Quartz 监听鼠标手势
+pyobjc-framework-Cocoa>=10.0
+pyobjc-framework-Quartz>=10.0

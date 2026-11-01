@@ -1,0 +1,153 @@
+name: Build macOS app
+
+# 打 tag（v*）自动出包并挂到 Release；也可以在 Actions 页面手动触发，只留 artifacts。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      intel:
+        description: "同时构建 Intel (x86_64) 版本"
+        type: boolean
+        default: false
+
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
+jobs:
+  build-arm64:
+    name: Build (Apple Silicon)
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-macos.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-macos.txt
+
+      - name: Run tests
+        run: python -m pytest tests -q -o faulthandler_timeout=120
+
+      - name: Build QQMusic.app
+        env:
+          PACKAGE_USE_VENV: "0"
+          PACKAGE_INSTALL_DEPS: "0"
+          PACKAGE_RUN_TESTS: "0"
+          PACKAGE_ZIP_NAME: QQMusic-macOS-arm64.zip
+        run: bash packaging/macos/package.sh
+
+      - name: Checksums
+        run: |
+          cd dist
+          shasum -a 256 "QQMusic-macOS-arm64.zip" > "SHA256SUMS-arm64.txt"
+          cat "SHA256SUMS-arm64.txt"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: QQMusic-macOS-arm64
+          path: |
+            dist/QQMusic-macOS-arm64.zip
+            dist/SHA256SUMS-arm64.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  build-intel:
+    name: Build (Intel, optional)
+    if: github.event_name == 'workflow_dispatch' && inputs.intel
+    runs-on: macos-13
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-macos.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-macos.txt
+
+      - name: Run tests
+        run: python -m pytest tests -q -o faulthandler_timeout=120
+
+      - name: Build QQMusic.app
+        env:
+          PACKAGE_USE_VENV: "0"
+          PACKAGE_INSTALL_DEPS: "0"
+          PACKAGE_RUN_TESTS: "0"
+          PACKAGE_ZIP_NAME: QQMusic-macOS-x86_64.zip
+        run: bash packaging/macos/package.sh
+
+      - name: Checksums
+        run: |
+          cd dist
+          shasum -a 256 "QQMusic-macOS-x86_64.zip" > "SHA256SUMS-x86_64.txt"
+          cat "SHA256SUMS-x86_64.txt"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: QQMusic-macOS-x86_64
+          path: |
+            dist/QQMusic-macOS-x86_64.zip
+            dist/SHA256SUMS-x86_64.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Attach to GitHub Release
+    needs:
+      - build-arm64
+      - build-intel
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && needs.build-arm64.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List files
+        run: ls -lh artifacts
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/*.zip
+            artifacts/SHA256SUMS-*.txt
+          fail_on_unmatched_files: false
