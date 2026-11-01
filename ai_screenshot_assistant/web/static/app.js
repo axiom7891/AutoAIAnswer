@@ -25,6 +25,13 @@
   const outputAutoEnabled = document.getElementById("output-auto-enabled");
   const outputAutoSeconds = document.getElementById("output-auto-seconds");
   const outputExpand = document.getElementById("output-expand");
+  const chunkSizeInput = document.getElementById("chunk-size");
+  const chunkCopyButton = document.getElementById("chunk-copy-button");
+  const chunkResetButton = document.getElementById("chunk-reset");
+  const chunkProgress = document.getElementById("chunk-progress");
+  const chunkSizeKey = "answerChunk:size";
+  let chunkIndex = 0;
+  let chunkSourceText = "";
   const modelHint = document.getElementById("model-hint");
   const modelRoute = document.getElementById("model-route");
   const cursorKey = `lastEventId:${sessionId || "missing"}`;
@@ -379,8 +386,29 @@
         code.dataset.language = match[1].toLowerCase();
       }
       code.textContent = match[2].trimEnd();
+
+      const shell = document.createElement("div");
+      shell.className = "code-shell";
+      const toolbar = document.createElement("div");
+      toolbar.className = "code-toolbar";
+      if (match[1]) {
+        const lang = document.createElement("span");
+        lang.className = "code-lang";
+        lang.textContent = match[1].toLowerCase();
+        toolbar.appendChild(lang);
+      }
+      const copyButton = document.createElement("button");
+      copyButton.type = "button";
+      copyButton.className = "code-copy";
+      copyButton.textContent = "复制代码";
+      copyButton.addEventListener("click", function () {
+        copyAnswer(code.textContent, copyButton, "复制代码");
+      });
+      toolbar.appendChild(copyButton);
+      shell.appendChild(toolbar);
       pre.appendChild(code);
-      container.appendChild(pre);
+      shell.appendChild(pre);
+      container.appendChild(shell);
       lastIndex = codePattern.lastIndex;
       match = codePattern.exec(value);
     }
@@ -539,9 +567,15 @@
 
   function setOutput(text) {
     const previousTop = outputEl.scrollTop;
-    renderFormattedText(outputEl, text || "");
+    const nextText = String(text || "");
+    renderFormattedText(outputEl, nextText);
     outputEl.scrollTop = previousTop;
     updateOutputPager();
+    if (!nextText.startsWith(chunkSourceText)) {
+      chunkIndex = 0;
+    }
+    chunkSourceText = nextText;
+    updateChunkStatus();
   }
 
   function trimChatMessages() {
@@ -989,8 +1023,9 @@
     };
   }
 
-  async function copyAnswer(text, button) {
-    if (!text) return;
+  async function copyAnswer(text, button, label) {
+    if (!text) return false;
+    const restoreLabel = label || "复制答案";
     let copied = false;
     try {
       if (navigator.clipboard && window.isSecureContext) {
@@ -1012,9 +1047,93 @@
       field.remove();
       if (previous) previous.focus({preventScroll: true});
     }
-    button.textContent = copied ? "已复制" : "复制失败";
-    setTimeout(function () { button.textContent = "复制答案"; }, 1500);
+    if (button) {
+      button.textContent = copied ? "已复制" : "复制失败";
+      setTimeout(function () { button.textContent = restoreLabel; }, 1500);
+    }
+    return copied;
   }
+
+  function chunkSizeValue() {
+    let size = Number(chunkSizeInput && chunkSizeInput.value) || 200;
+    size = Math.max(20, Math.min(2000, Math.round(size)));
+    if (chunkSizeInput && String(chunkSizeInput.value) !== String(size)) {
+      chunkSizeInput.value = String(size);
+    }
+    return size;
+  }
+
+  function answerChunks() {
+    const text = String(chunkSourceText || "");
+    const size = chunkSizeValue();
+    const chunks = [];
+    for (let start = 0; start < text.length; start += size) {
+      chunks.push(text.slice(start, start + size));
+    }
+    return chunks;
+  }
+
+  function updateChunkStatus() {
+    const chunks = answerChunks();
+    if (chunkCopyButton) {
+      chunkCopyButton.disabled = chunks.length === 0 || chunkIndex >= chunks.length;
+    }
+    if (chunkProgress) {
+      if (!chunks.length) {
+        chunkProgress.textContent = "0 / 0 段";
+      } else {
+        const current = Math.min(chunkIndex + (chunkIndex < chunks.length ? 1 : 0), chunks.length);
+        chunkProgress.textContent = `${current} / ${chunks.length} 段`;
+      }
+    }
+    if (chunkResetButton) {
+      chunkResetButton.disabled = chunks.length === 0;
+    }
+  }
+
+  function resetChunks() {
+    chunkIndex = 0;
+    updateChunkStatus();
+  }
+
+  function copyNextChunk() {
+    const chunks = answerChunks();
+    if (chunkIndex >= chunks.length) {
+      if (chunkCopyButton) {
+        chunkCopyButton.textContent = "已到末尾";
+        setTimeout(function () { chunkCopyButton.textContent = "复制下一段"; }, 1500);
+      }
+      return;
+    }
+    const text = chunks[chunkIndex];
+    chunkIndex += 1;
+    copyAnswer(text, chunkCopyButton, "复制下一段").then(function (copied) {
+      if (copied) {
+        updateChunkStatus();
+      } else {
+        chunkIndex -= 1;
+        updateChunkStatus();
+      }
+    });
+  }
+
+  if (chunkSizeInput) {
+    const savedSize = Number(localStorage.getItem(chunkSizeKey));
+    if (savedSize >= 20 && savedSize <= 2000) {
+      chunkSizeInput.value = String(Math.round(savedSize));
+    }
+    chunkSizeInput.addEventListener("change", function () {
+      localStorage.setItem(chunkSizeKey, String(chunkSizeValue()));
+      resetChunks();
+    });
+  }
+  if (chunkCopyButton) {
+    chunkCopyButton.addEventListener("click", copyNextChunk);
+  }
+  if (chunkResetButton) {
+    chunkResetButton.addEventListener("click", resetChunks);
+  }
+
 
   document.getElementById("copy-direct").addEventListener("click", function () {
     copyAnswer(buffer, this);

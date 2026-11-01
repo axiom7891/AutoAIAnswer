@@ -50,6 +50,16 @@
       <p class="answer-shortcut-hint">
         外接键盘：Shift+W / Shift+S 答案框上下翻页，Shift+A / Shift+D 代码左右滚动
       </p>
+      <div class="chunk-copy">
+        <label class="chunk-copy-label" for="chunk-size">
+          分段复制：每
+          <input id="chunk-size" type="number" min="20" max="2000" step="10" value="200" inputmode="numeric" />
+          字符
+        </label>
+        <button class="reader-button" id="chunk-copy-button" type="button" disabled>复制下一段</button>
+        <span class="chunk-progress" id="chunk-progress">0 / 0 段</span>
+        <button class="reader-button" id="chunk-reset" type="button" disabled>从头</button>
+      </div>
       <button class="clear-chat" id="copy-direct" type="button">复制答案</button>
       <button class="clear-chat" id="clear-direct" type="button">清空内容</button>
       <section class="chatbot" aria-label="截图对话">

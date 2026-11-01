@@ -229,6 +229,71 @@ h1 { margin: 0; font-size: 20px; }
   line-height: 1.4;
 }
 
+.code-shell {
+  margin: 8px 0;
+}
+
+.code-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.code-lang {
+  color: var(--muted);
+  font: 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-transform: uppercase;
+}
+
+.code-copy {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.code-copy:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chunk-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chunk-copy-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.chunk-copy-label input[type="number"] {
+  width: 64px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-align: center;
+}
+
+.chunk-progress {
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+}
+
 .output-auto input[type="number"] {
   width: 48px;
   min-height: 28px;
