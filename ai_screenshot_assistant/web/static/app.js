@@ -1026,8 +1026,7 @@
     applyCodeViewSettings();
   }
 
-  function applyRemoteScroll(payload) {
-    const data = payload || {};
+  function applyRemoteScroll(payload) {    const data = payload || {};
     const direction = String(data.direction || "").toLowerCase();
     const steps = Math.max(1, Math.min(20, Number(data.steps) || 1));
     pauseCodePan();
@@ -1063,6 +1062,37 @@
       stopCodePan();
     }
   }
+
+  // HTTP 兜底：电脑端方向键也会写进后端队列，这里每 700ms 取一次
+  let scrollCursor = null;
+
+  function pollScrollCommands() {
+    if (!sessionId) {
+      return;
+    }
+    const query = scrollCursor === null ? "" : `?after=${scrollCursor}`;
+    fetch(`/scroll/${encodeURIComponent(sessionId)}${query}`, { cache: "no-store" })
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (data) {
+        if (!data) {
+          return;
+        }
+        if (scrollCursor === null) {
+          scrollCursor = Number(data.next) || 0;
+          return;
+        }
+        (data.items || []).forEach(function (item) {
+          applyRemoteScroll({ direction: item.direction, steps: item.steps });
+        });
+        if (typeof data.next === "number" && data.next > scrollCursor) {
+          scrollCursor = data.next;
+        }
+      })
+      .catch(function () { /* 下一轮再试 */ });
+  }
+
+  setInterval(pollScrollCommands, 700);
+  pollScrollCommands();
 
   function connect() {
     if (!sessionId) {

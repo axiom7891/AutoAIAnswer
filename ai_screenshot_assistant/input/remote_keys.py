@@ -1,7 +1,13 @@
-"""电脑键盘遥控手机端答案框：Ctrl+Alt+方向键 滚动，Ctrl+Alt+P 开关自动巡览。
+"""电脑键盘方向键遥控手机端答案框（↑ ↓ ← →，无组合键）。
 
-手机端页面不认识这些按键，桌面端把按键翻译成 ``answer.scroll`` / ``answer.autopan``
-事件，经后端 WebSocket 广播给手机页面执行滚动。
+手机页面不认识电脑按键，桌面端把按键翻译成滚动指令，走两条路：
+1. WebSocket 广播（快）；
+2. POST 后端 ``/scroll/{session_id}``，手机页面每 700ms 轮询兜底。
+
+按键采集也有两条路，保证「一定能用」：
+- pynput 全局键盘钩子（正常情况）；
+- Win32 ``GetAsyncKeyState`` 轮询（钩子被安全软件/管理员权限挡掉时仍然有效）。
+两条路都触发时按 60ms 去重。
 """
 
 from __future__ import annotations
@@ -10,26 +16,20 @@ import sys
 import threading
 import time
 
-_CTRL_NAMES = {"ctrl", "ctrl_l", "ctrl_r"}
-_ALT_NAMES = {"alt", "alt_l", "alt_r", "alt_gr"}
 _ACTION_KEYS = {
     "up": "up",
     "down": "down",
     "left": "left",
     "right": "right",
-    "w": "up",
-    "a": "left",
-    "s": "down",
-    "d": "right",
-    "p": "toggle",
 }
-_VK_ACTIONS = {38: "up", 40: "down", 37: "left", 39: "right", 87: "up", 65: "left", 83: "down", 68: "right", 80: "toggle"}
+_VK_ACTIONS = {38: "up", 40: "down", 37: "left", 39: "right"}
+_DEDUPE_SECONDS = 0.06
 
 
 class RemoteScrollState:
-    """纯逻辑：把按键序列翻译成滚动动作，便于测试。"""
+    """纯逻辑：把方向键翻译成滚动动作，便于测试。"""
 
-    def __init__(self, throttle_seconds: float = 0.12) -> None:
+    def __init__(self, throttle_seconds: float = 0.08) -> None:
         self.throttle_seconds = throttle_seconds
         self.pressed: set[str] = set()
         self._last_fired: dict[str, float] = {}
@@ -39,24 +39,14 @@ class RemoteScrollState:
         name = getattr(key, "name", None)
         if name:
             return str(name).lower()
-        char = getattr(key, "char", None)
-        if isinstance(char, str) and char:
-            return char.lower()
         vk = getattr(key, "vk", None)
         return f"vk{vk}" if vk is not None else ""
-
-    def _ctrl_alt_down(self) -> bool:
-        return bool(self.pressed & _CTRL_NAMES) and bool(self.pressed & _ALT_NAMES)
 
     def press(self, key: object, now: float | None = None) -> str:
         name = self.key_name(key)
         if not name:
             return ""
         self.pressed.add(name)
-        if name in _CTRL_NAMES or name in _ALT_NAMES:
-            return ""
-        if not self._ctrl_alt_down():
-            return ""
         action = _ACTION_KEYS.get(name)
         if action is None:
             vk = getattr(key, "vk", None)
@@ -75,29 +65,88 @@ class RemoteScrollState:
 
 
 class RemoteAnswerKeyListener:
-    def __init__(self, on_scroll, on_toggle_pan=None) -> None:
+    def __init__(self, on_scroll, on_toggle_pan=None, key_state=None) -> None:
         self.on_scroll = on_scroll
         self.on_toggle_pan = on_toggle_pan
         self.state = RemoteScrollState()
+        self.enabled = True
+        self.error = ""
+        self._key_state = key_state or self._default_key_state
         self._listener = None
+        self._poll_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        self._last_dispatch: dict[str, float] = {}
+
+    # ---- 采集：钩子 + 轮询 ----
+
+    @staticmethod
+    def _default_key_state(vk: int) -> bool:
+        if sys.platform != "win32":
+            return False
+        try:
+            import ctypes
+
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+            user32.GetAsyncKeyState.restype = ctypes.c_short
+            return bool(user32.GetAsyncKeyState(vk) & 0x8000)
+        except Exception:
+            return False
+
+    def _dispatch(self, action: str) -> None:
+        if not action or not self.enabled:
+            return
+        now = time.monotonic()
+        with self._lock:
+            if now - self._last_dispatch.get(action, 0.0) < _DEDUPE_SECONDS:
+                return
+            self._last_dispatch[action] = now
+        self.on_scroll(action)
 
     def _press(self, key: object) -> None:
+        if not self.enabled:
+            return
         with self._lock:
             action = self.state.press(key)
-        if action == "toggle":
-            if self.on_toggle_pan is not None:
-                self.on_toggle_pan()
-        elif action:
-            self.on_scroll(action)
+        if action:
+            self._dispatch(action)
 
     def _release(self, key: object) -> None:
         with self._lock:
             self.state.release(key)
 
+    def poll_step(self, previous: dict[int, bool]) -> None:
+        """轮询一轮按键状态；返回是否新按下。"""
+        for vk, action in _VK_ACTIONS.items():
+            try:
+                down = bool(self._key_state(vk))
+            except Exception:
+                down = False
+            if down and not previous.get(vk, False):
+                self._dispatch(action)
+            previous[vk] = down
+
+    def _poll_loop(self) -> None:
+        previous = {vk: False for vk in _VK_ACTIONS}
+        while not self._stop_event.wait(0.04):
+            if not self.enabled:
+                previous = {vk: False for vk in _VK_ACTIONS}
+                continue
+            self.poll_step(previous)
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.enabled = bool(enabled)
+
     def start(self) -> None:
         if sys.platform not in {"win32", "darwin"}:
             return
+        if sys.platform == "win32" and self._poll_thread is None:
+            self._stop_event.clear()
+            self._poll_thread = threading.Thread(
+                target=self._poll_loop, daemon=True, name="remote-arrow-poll"
+            )
+            self._poll_thread.start()
         if self._listener is not None:
             return
         from pynput import keyboard
@@ -109,11 +158,17 @@ class RemoteAnswerKeyListener:
                 suppress=False,
             )
             self._listener.start()
-        except Exception:
-            self.stop()
-            raise
+            self.error = ""
+        except Exception as exc:
+            # 钩子装不上不影响轮询兜底
+            self.error = str(exc)
+            self._listener = None
 
     def stop(self) -> None:
+        self._stop_event.set()
+        if self._poll_thread is not None:
+            self._poll_thread.join(timeout=1)
+            self._poll_thread = None
         if self._listener is not None:
             try:
                 self._listener.stop()

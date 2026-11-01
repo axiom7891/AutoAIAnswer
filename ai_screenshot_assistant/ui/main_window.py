@@ -435,10 +435,18 @@ class MainWindow(QMainWindow):
         hotkey_row.addWidget(self.multi_hotkeys_toggle)
         hotkey_row.addStretch(1)
         layout.addLayout(hotkey_row)
+        self.remote_arrows_toggle = QCheckBox("方向键 ↑ ↓ ← → 直接遥控手机答案框（不用组合键）")
+        self.remote_arrows_toggle.setChecked(self._settings_bool("phone/arrow_remote", True))
+        self.remote_arrows_toggle.setToolTip(
+            "勾选后，电脑上按方向键即可滚动手机端答案框：↑/↓ 翻页，←/→ 代码左右滚。"
+            "不需要按住 Ctrl 或 Alt；其他软件里的方向键仍照常使用。"
+        )
+        self.remote_arrows_toggle.toggled.connect(self.set_remote_arrows_enabled)
+        layout.addWidget(self.remote_arrows_toggle)
         hotkey_hint = QLabel(
             "快捷键：Ctrl+Shift+左键 连续截图；Ctrl+Shift+右键 分析缓存；"
             "Ctrl+Alt+O 显示/隐藏字幕；鼠标中键长按 1 秒 开关自动截屏；"
-            "Ctrl+Alt+↑↓←→ 滚动手机答案框，Ctrl+Alt+P 开关手机代码自动巡览。"
+            "方向键 ↑↓←→ 滚动手机答案框（↑↓ 翻页、←→ 代码左右滚）。"
         )
         hotkey_hint.setWordWrap(True)
         layout.addWidget(hotkey_hint)
@@ -1184,13 +1192,22 @@ class MainWindow(QMainWindow):
             on_scroll=self._remote_scroll_answer,
             on_toggle_pan=self._toggle_remote_autopan,
         )
+        enabled = self._settings_bool("phone/arrow_remote", True)
+        self.remote_keys.set_enabled(enabled)
         try:
             self.remote_keys.start()
             self._log(
-                "手机答案遥控：Ctrl+Alt+↑/↓/←/→ 滚动答案框，Ctrl+Alt+W/A/S/D 同效，Ctrl+Alt+P 开关自动巡览"
+                f"手机答案遥控：方向键 ↑↓←→（{'已启用' if enabled else '已关闭'}），无需组合键"
             )
         except Exception as exc:
-            self._log(f"手机答案遥控快捷键启动失败：{exc}")
+            self._log(f"方向键遥控启动失败（其他软件可能占用了键盘钩子）：{exc}")
+
+    def set_remote_arrows_enabled(self, enabled: bool) -> None:
+        self.app_settings.setValue("phone/arrow_remote", bool(enabled))
+        self.app_settings.sync()
+        if self.remote_keys is not None:
+            self.remote_keys.set_enabled(bool(enabled))
+        self._log(f"方向键遥控手机答案框：{'开启' if enabled else '关闭'}")
 
     def _send_mobile_event(self, event_type: str, payload: dict[str, Any]) -> None:
         if self.workflow is None or self.publisher is None:
@@ -1204,6 +1221,23 @@ class MainWindow(QMainWindow):
 
     def _remote_scroll_answer(self, direction: str) -> None:
         self._send_mobile_event("answer.scroll", {"direction": direction, "steps": 1})
+        threading.Thread(
+            target=self._post_scroll_command, args=(direction,), daemon=True,
+            name="remote-scroll-http",
+        ).start()
+
+    def _post_scroll_command(self, direction: str) -> None:
+        """HTTP 兜底：手机端每 700ms 轮询这个队列，WS 异常也能滚。"""
+        session = self.workflow.session_id if self.workflow is not None else ""
+        if not session:
+            return
+        url = f"{self.backend_url.rstrip('/')}/scroll/{session}"
+        try:
+            import requests
+
+            requests.post(url, json={"direction": direction, "steps": 1}, timeout=2)
+        except Exception as exc:
+            self._log(f"方向键指令发送失败：{exc}")
 
     def _toggle_remote_autopan(self) -> None:
         self.remote_pan_enabled = not self.remote_pan_enabled

@@ -27,6 +27,8 @@ class Session:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     events: list[dict[str, Any]] = field(default_factory=list)
     next_event_id: int = 1
+    scroll_events: list[dict[str, Any]] = field(default_factory=list)
+    next_scroll_id: int = 1
 
     @property
     def paired(self) -> bool:

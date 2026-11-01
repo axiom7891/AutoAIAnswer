@@ -61,6 +61,38 @@ async def root() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.post("/scroll/{session_id}")
+async def push_scroll(session_id: str, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """桌面端方向键 → 手机端答案框滚动（HTTP 兜底通道）。"""
+    session = manager.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session is invalid or expired")
+    direction = str(payload.get("direction") or "")
+    if direction not in {"up", "down", "left", "right", "top", "bottom"}:
+        raise HTTPException(status_code=400, detail="Unsupported direction")
+    try:
+        steps = int(payload.get("steps") or 1)
+    except (TypeError, ValueError):
+        steps = 1
+    steps = max(1, min(20, steps))
+    event = {"id": session.next_scroll_id, "direction": direction, "steps": steps}
+    session.next_scroll_id += 1
+    session.scroll_events.append(event)
+    if len(session.scroll_events) > 200:
+        del session.scroll_events[:-100]
+    return {"ok": True, "id": event["id"]}
+
+
+@app.get("/scroll/{session_id}")
+async def fetch_scroll(session_id: str, after: int = 0) -> dict[str, Any]:
+    """手机端轮询：取 after 之后的方向键指令。"""
+    session = manager.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session is invalid or expired")
+    items = [event for event in session.scroll_events if int(event["id"]) > int(after)]
+    return {"items": items, "next": session.next_scroll_id - 1}
+
+
 @app.websocket("/ws/desktop/{session_id}")
 async def desktop_ws(websocket: WebSocket, session_id: str) -> None:
     session = manager.get(session_id)

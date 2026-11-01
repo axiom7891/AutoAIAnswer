@@ -107,6 +107,35 @@ def test_mobile_code_view_setting_reaches_desktop() -> None:
     assert command["payload"]["wrap"] is False
 
 
+def test_scroll_queue_roundtrip() -> None:
+    client = TestClient(app)
+    session = client.post("/sessions").json()
+    session_id = session["session_id"]
+
+    first = client.get(f"/scroll/{session_id}").json()
+    assert first["next"] == 0
+
+    pushed = client.post(f"/scroll/{session_id}", json={"direction": "down"}).json()
+    assert pushed["ok"] is True
+
+    events = client.get(f"/scroll/{session_id}?after=0").json()
+    assert [item["direction"] for item in events["items"]] == ["down"]
+    assert events["next"] == 1
+
+    again = client.get(f"/scroll/{session_id}?after={events['next']}").json()
+    assert again["items"] == []
+
+
+def test_scroll_queue_rejects_unknown_direction() -> None:
+    client = TestClient(app)
+    session = client.post("/sessions").json()
+    session_id = session["session_id"]
+
+    response = client.post(f"/scroll/{session_id}", json={"direction": "left-right"})
+
+    assert response.status_code == 400
+
+
 def test_scroll_command_from_desktop_reaches_mobile() -> None:
     client = TestClient(app)
     session = client.post("/sessions").json()
