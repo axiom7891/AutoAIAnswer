@@ -1,0 +1,18 @@
+﻿watch 2026-11-01T19:30:15.1134530+08:00
+status=completed conclusion=failure
+job: Build (Apple Silicon) => completed/failure
+  - 1. Set up job: completed/success
+  - 2. Checkout: completed/success
+  - 3. Set up Python: completed/success
+  - 4. Install dependencies: completed/success
+  - 5. Run tests: completed/failure
+  - 6. Build QQMusic.app: completed/skipped
+  - 7. Checksums: completed/skipped
+  - 8. Upload artifacts: completed/skipped
+  - 15. Post Set up Python: completed/skipped
+  - 16. Post Checkout: completed/success
+  - 17. Complete job: completed/success
+job: Build (Intel, optional) => completed/skipped
+job: Attach to GitHub Release => completed/skipped
+releases: none yet
+done 2026-11-01T19:31:19.2396460+08:00

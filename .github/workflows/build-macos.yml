@@ -1,8 +1,11 @@
 name: Build macOS app
 
-# 打 tag（v*）自动出包并挂到 Release；也可以在 Actions 页面手动触发，只留 artifacts。
+# 打 tag（v*）自动出包并挂到 Release；main 分支推送只跑测试与打包、不建 Release；
+# 也可以在 Actions 页面手动触发。
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:
@@ -47,7 +50,24 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-macos.txt
 
       - name: Run tests
-        run: python -m pytest tests -q -o faulthandler_timeout=120
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest tests -q -o faulthandler_timeout=120 2>&1 | tee pytest-macos.log
+
+      - name: Report pytest failures
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### pytest tail"
+            echo '```'
+            tail -n 80 pytest-macos.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(FAILED|ERROR)' pytest-macos.log | head -n 10 | while IFS= read -r line; do
+            echo "::error title=pytest::${line}"
+          done
 
       - name: Build QQMusic.app
         env:
@@ -98,7 +118,24 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-macos.txt
 
       - name: Run tests
-        run: python -m pytest tests -q -o faulthandler_timeout=120
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest tests -q -o faulthandler_timeout=120 2>&1 | tee pytest-macos.log
+
+      - name: Report pytest failures
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### pytest tail"
+            echo '```'
+            tail -n 80 pytest-macos.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(FAILED|ERROR)' pytest-macos.log | head -n 10 | while IFS= read -r line; do
+            echo "::error title=pytest::${line}"
+          done
 
       - name: Build QQMusic.app
         env:
