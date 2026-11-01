@@ -222,6 +222,13 @@ h1 { margin: 0; font-size: 20px; }
   margin: 0;
 }
 
+.answer-shortcut-hint {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .output-auto input[type="number"] {
   width: 48px;
   min-height: 28px;
@@ -317,6 +324,7 @@ h1 { margin: 0; font-size: 20px; }
   background: #050b14;
   color: #f5f7fb;
   overflow-x: auto;
+  scroll-behavior: smooth;
   white-space: pre;
   font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }

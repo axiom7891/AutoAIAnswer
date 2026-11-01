@@ -423,6 +423,82 @@
     }
   }
 
+  function scrollableCodeBlock() {
+    const blocks = Array.prototype.slice.call(outputEl.querySelectorAll("pre.code-block"));
+    if (!blocks.length) {
+      return null;
+    }
+    const view = outputEl.getBoundingClientRect();
+    const middle = view.top + view.height / 2;
+    let best = null;
+    let bestDistance = Infinity;
+    blocks.forEach(function (block) {
+      const rect = block.getBoundingClientRect();
+      if (rect.bottom < view.top || rect.top > view.bottom) {
+        return;
+      }
+      if (block.scrollWidth <= block.clientWidth + 2) {
+        return;
+      }
+      const distance = Math.abs(rect.top + rect.height / 2 - middle);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = block;
+      }
+    });
+    return best;
+  }
+
+  function scrollOutputHorizontal(direction) {
+    const block = scrollableCodeBlock();
+    if (block) {
+      const step = Math.max(48, Math.round(block.clientWidth * 0.6));
+      block.scrollTo({ left: block.scrollLeft + direction * step, behavior: "smooth" });
+      return true;
+    }
+    const maxLeft = Math.max(0, outputEl.scrollWidth - outputEl.clientWidth);
+    if (maxLeft <= 2) {
+      return false;
+    }
+    const step = Math.max(48, Math.round(outputEl.clientWidth * 0.6));
+    const target = Math.max(0, Math.min(maxLeft, outputEl.scrollLeft + direction * step));
+    outputEl.scrollTo({ left: target, behavior: "smooth" });
+    return true;
+  }
+
+  function answerShortcutName(event) {
+    const code = String(event.code || "");
+    if (/^Key[WASD]$/.test(code)) {
+      return code.slice(3).toLowerCase();
+    }
+    const key = String(event.key || "").toLowerCase();
+    return ["w", "a", "s", "d"].indexOf(key) >= 0 ? key : "";
+  }
+
+  function handleAnswerShortcut(event) {
+    if (!event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    const target = event.target;
+    if (target) {
+      const tag = String(target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable) {
+        return;
+      }
+    }
+    const name = answerShortcutName(event);
+    if (!name) {
+      return;
+    }
+    if (name === "w" || name === "s") {
+      scrollOutputPage(name === "w" ? -1 : 1);
+    } else {
+      scrollOutputHorizontal(name === "a" ? -1 : 1);
+    }
+    stopAutoPaging();
+    event.preventDefault();
+  }
+
   function autoPageIntervalMs() {
     let seconds = Number(outputAutoSeconds && outputAutoSeconds.value) || 10;
     seconds = Math.max(3, Math.min(120, Math.round(seconds)));
@@ -1106,6 +1182,7 @@
   outputEl.addEventListener("wheel", stopAutoPaging, { passive: true });
   outputEl.addEventListener("touchstart", stopAutoPaging, { passive: true });
   outputEl.addEventListener("pointerdown", stopAutoPaging);
+  document.addEventListener("keydown", handleAnswerShortcut);
   window.addEventListener("resize", updateOutputPager);
 
   renderPreviewList();
