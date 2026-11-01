@@ -55,6 +55,7 @@ from ai_screenshot_assistant.core.workflow import AssistantWorkflow
 from ai_screenshot_assistant.desktop_command_client import DesktopCommandClient
 from ai_screenshot_assistant.input.mouse_listener import MouseRoiListener
 from ai_screenshot_assistant.input.ctrl_listener import CtrlScreenshotListener
+from ai_screenshot_assistant.input.remote_keys import RemoteAnswerKeyListener
 from ai_screenshot_assistant.input.mac_hotkeys import MacHotkeyListener
 from ai_screenshot_assistant.resources import app_icon_path
 from ai_screenshot_assistant.ui.auto_capture import (
@@ -164,6 +165,8 @@ class MainWindow(QMainWindow):
         self.mouse_listener: MouseRoiListener | None = None
         self.ctrl_listener: CtrlScreenshotListener | None = None
         self.mac_hotkeys: MacHotkeyListener | None = None
+        self.remote_keys: RemoteAnswerKeyListener | None = None
+        self.remote_pan_enabled = False
         self.ctrl_capture_enabled = self._settings_bool("customer_c/ctrl_capture", True)
         self._force_quit = False
         self.tray_icon: QSystemTrayIcon | None = None
@@ -434,7 +437,8 @@ class MainWindow(QMainWindow):
         layout.addLayout(hotkey_row)
         hotkey_hint = QLabel(
             "快捷键：Ctrl+Shift+左键 连续截图；Ctrl+Shift+右键 分析缓存；"
-            "Ctrl+Alt+O 显示/隐藏字幕；鼠标中键长按 1 秒 开关自动截屏。"
+            "Ctrl+Alt+O 显示/隐藏字幕；鼠标中键长按 1 秒 开关自动截屏；"
+            "Ctrl+Alt+↑↓←→ 滚动手机答案框，Ctrl+Alt+P 开关手机代码自动巡览。"
         )
         hotkey_hint.setWordWrap(True)
         layout.addWidget(hotkey_hint)
@@ -1171,8 +1175,40 @@ class MainWindow(QMainWindow):
     def _setup_platform_hotkeys(self) -> None:
         if sys.platform == "darwin":
             self._setup_mac_hotkeys()
+        else:
+            self._setup_ctrl_listener()
+        self._setup_remote_answer_keys()
+
+    def _setup_remote_answer_keys(self) -> None:
+        self.remote_keys = RemoteAnswerKeyListener(
+            on_scroll=self._remote_scroll_answer,
+            on_toggle_pan=self._toggle_remote_autopan,
+        )
+        try:
+            self.remote_keys.start()
+            self._log(
+                "手机答案遥控：Ctrl+Alt+↑/↓/←/→ 滚动答案框，Ctrl+Alt+W/A/S/D 同效，Ctrl+Alt+P 开关自动巡览"
+            )
+        except Exception as exc:
+            self._log(f"手机答案遥控快捷键启动失败：{exc}")
+
+    def _send_mobile_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        if self.workflow is None or self.publisher is None:
+            self._log("手机未连接，遥控指令未发送")
             return
-        self._setup_ctrl_listener()
+        event = Event(type=event_type, session_id=self.workflow.session_id, payload=payload)
+        try:
+            self.publisher.send_sync(event.to_dict())
+        except Exception as exc:
+            self._log(f"遥控指令发送失败：{exc}")
+
+    def _remote_scroll_answer(self, direction: str) -> None:
+        self._send_mobile_event("answer.scroll", {"direction": direction, "steps": 1})
+
+    def _toggle_remote_autopan(self) -> None:
+        self.remote_pan_enabled = not self.remote_pan_enabled
+        self._send_mobile_event("answer.autopan", {"enabled": self.remote_pan_enabled})
+        self._log(f"手机代码自动巡览：{'开启' if self.remote_pan_enabled else '关闭'}")
 
     def _setup_mac_hotkeys(self) -> None:
         self.mac_hotkeys = MacHotkeyListener(
@@ -1602,6 +1638,8 @@ class MainWindow(QMainWindow):
             self.ctrl_listener.stop()
         if self.mac_hotkeys is not None:
             self.mac_hotkeys.stop()
+        if self.remote_keys is not None:
+            self.remote_keys.stop()
         if self.publisher is not None:
             self.publisher.close()
         if self.command_client is not None:

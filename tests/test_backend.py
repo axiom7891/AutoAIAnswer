@@ -89,6 +89,29 @@ def test_desktop_events_reach_mobile_websocket() -> None:
     assert received["event_id"] == 1
 
 
+def test_scroll_command_from_desktop_reaches_mobile() -> None:
+    client = TestClient(app)
+    session = client.post("/sessions").json()
+    session_id = session["session_id"]
+
+    with client.websocket_connect(f"/ws/mobile/{session_id}") as mobile:
+        mobile.receive_json()
+        with client.websocket_connect(f"/ws/desktop/{session_id}") as desktop:
+            mobile.receive_json()
+            desktop.send_json(
+                {
+                    "type": "answer.scroll",
+                    "session_id": session_id,
+                    "timestamp": "now",
+                    "payload": {"direction": "down", "steps": 1},
+                }
+            )
+            received = mobile.receive_json()
+
+    assert received["type"] == "answer.scroll"
+    assert received["payload"]["direction"] == "down"
+
+
 def test_mobile_fullscreen_command_reaches_desktop_command_socket() -> None:
     client = TestClient(app)
     session = client.post("/sessions").json()

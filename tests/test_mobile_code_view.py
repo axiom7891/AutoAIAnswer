@@ -35,12 +35,12 @@ def test_auto_pan_loop_and_settings_are_wired() -> None:
     assert "function applyCodeViewSettings()" in js
     assert "function loadCodeViewSettings()" in js
     assert "function saveCodeViewSettings()" in js
-    assert "function panTick(timestamp)" in js
+    assert "function panStep()" in js
     assert "function startCodePan()" in js
     assert "function stopCodePan()" in js
     assert "function pauseCodePan()" in js
-    assert "requestAnimationFrame(panTick)" in js
-    assert "cancelAnimationFrame(panFrame)" in js
+    assert "setInterval(panStep, 50)" in js
+    assert "clearInterval(panTimer)" in js
     assert 'document.body.classList.toggle("code-wrap"' in js
     assert '--code-font-size' in js
     assert "CODE_VIEW_KEY" in js

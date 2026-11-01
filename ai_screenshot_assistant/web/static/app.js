@@ -37,8 +37,7 @@
   const codePanToggle = document.getElementById("code-autopan");
   const CODE_VIEW_KEY = "codeView:settings";
   let codeViewSettings = { wrap: true, font: "13", pan: true };
-  let panFrame = null;
-  let panLast = 0;
+  let panTimer = null;
   let panPauseUntil = 0;
   let panDirection = 1;
   let panXDirection = 1;
@@ -1002,6 +1001,48 @@
       if (payload.display_name && modelHint) {
         modelHint.textContent = payload.display_name;
       }
+    } else if (event.type === "answer.scroll") {
+      applyRemoteScroll(payload);
+    } else if (event.type === "answer.autopan") {
+      applyRemoteAutoPan(payload);
+    }
+  }
+
+  function applyRemoteScroll(payload) {
+    const data = payload || {};
+    const direction = String(data.direction || "").toLowerCase();
+    const steps = Math.max(1, Math.min(20, Number(data.steps) || 1));
+    pauseCodePan();
+    stopAutoPaging();
+    if (direction === "up") {
+      scrollOutputBy(-1, steps);
+    } else if (direction === "down") {
+      scrollOutputBy(1, steps);
+    } else if (direction === "left") {
+      scrollHorizontalBy(-1, steps);
+    } else if (direction === "right") {
+      scrollHorizontalBy(1, steps);
+    } else if (direction === "top") {
+      outputEl.scrollTo({ top: 0, behavior: "smooth" });
+      setTimeout(updateOutputPager, 350);
+    } else if (direction === "bottom") {
+      outputEl.scrollTo({ top: outputEl.scrollHeight, behavior: "smooth" });
+      setTimeout(updateOutputPager, 350);
+    }
+  }
+
+  function applyRemoteAutoPan(payload) {
+    const enabled = payload && typeof payload.enabled === "boolean"
+      ? payload.enabled
+      : !codeViewSettings.pan;
+    codeViewSettings.pan = enabled;
+    panPauseUntil = 0;
+    saveCodeViewSettings();
+    applyCodeViewSettings();
+    if (enabled) {
+      startCodePan();
+    } else {
+      stopCodePan();
     }
   }
 
@@ -1181,48 +1222,65 @@
     panPauseUntil = performance.now() + 6000;
   }
 
-  // 慢速巡览：答案框上下往复，代码块左右往复；手指/滚轮/按键会暂停 6 秒
-  function panTick(timestamp) {
-    panFrame = null;
-    if (!codeViewSettings.pan) {
+  function scrollOutputBy(direction, steps) {
+    const step = outputPageStep() * Math.max(1, steps);
+    const maxScroll = Math.max(0, outputEl.scrollHeight - outputEl.clientHeight);
+    const target = Math.max(0, Math.min(maxScroll, outputEl.scrollTop + direction * step));
+    outputEl.scrollTo({ top: target, behavior: "smooth" });
+    setTimeout(updateOutputPager, 350);
+  }
+
+  function scrollHorizontalBy(direction, steps) {
+    const block = scrollableCodeBlock();
+    const count = Math.max(1, steps);
+    if (block) {
+      const step = Math.max(48, Math.round(block.clientWidth * 0.6)) * count;
+      const maxLeft = Math.max(0, block.scrollWidth - block.clientWidth);
+      const target = Math.max(0, Math.min(maxLeft, block.scrollLeft + direction * step));
+      block.scrollTo({ left: target, behavior: "smooth" });
       return;
     }
-    if (!panLast) {
-      panLast = timestamp;
+    const maxLeft = Math.max(0, outputEl.scrollWidth - outputEl.clientWidth);
+    if (maxLeft <= 2) {
+      return;
     }
-    const dt = Math.min(0.06, Math.max(0, (timestamp - panLast) / 1000));
-    panLast = timestamp;
-    if (dt > 0 && performance.now() >= panPauseUntil) {
-      const maxScroll = Math.max(0, outputEl.scrollHeight - outputEl.clientHeight);
-      if (maxScroll > 4) {
-        let next = outputEl.scrollTop + panDirection * 14 * dt;
-        if (next >= maxScroll - 1) {
-          next = maxScroll;
-          panDirection = -1;
-          panPauseUntil = timestamp + 1200;
-        } else if (next <= 1) {
-          next = 0;
-          panDirection = 1;
-          panPauseUntil = timestamp + 1200;
-        }
-        outputEl.scrollTop = next;
-        updateOutputPager();
-      }
-      const block = scrollableCodeBlock();
-      if (block) {
-        const maxLeft = Math.max(0, block.scrollWidth - block.clientWidth);
-        let nextLeft = block.scrollLeft + panXDirection * 10 * dt;
-        if (nextLeft >= maxLeft - 1) {
-          nextLeft = maxLeft;
-          panXDirection = -1;
-        } else if (nextLeft <= 1) {
-          nextLeft = 0;
-          panXDirection = 1;
-        }
-        block.scrollLeft = nextLeft;
-      }
+    const step = Math.max(48, Math.round(outputEl.clientWidth * 0.6)) * count;
+    outputEl.scrollTo({ left: Math.max(0, Math.min(maxLeft, outputEl.scrollLeft + direction * step)), behavior: "smooth" });
+  }
+
+  // 慢速巡览：每 50ms 走一步，答案框约 14px/s、代码块约 10px/s，触底/触边反向
+  function panStep() {
+    if (!codeViewSettings.pan || performance.now() < panPauseUntil) {
+      return;
     }
-    panFrame = requestAnimationFrame(panTick);
+    const maxScroll = Math.max(0, outputEl.scrollHeight - outputEl.clientHeight);
+    if (maxScroll > 4) {
+      let next = outputEl.scrollTop + panDirection * 0.7;
+      if (next >= maxScroll - 1) {
+        next = maxScroll;
+        panDirection = -1;
+        panPauseUntil = performance.now() + 1200;
+      } else if (next <= 1) {
+        next = 0;
+        panDirection = 1;
+        panPauseUntil = performance.now() + 1200;
+      }
+      outputEl.scrollTop = Math.round(next);
+      updateOutputPager();
+    }
+    const block = scrollableCodeBlock();
+    if (block) {
+      const maxLeft = Math.max(0, block.scrollWidth - block.clientWidth);
+      let nextLeft = block.scrollLeft + panXDirection * 0.5;
+      if (nextLeft >= maxLeft - 1) {
+        nextLeft = maxLeft;
+        panXDirection = -1;
+      } else if (nextLeft <= 1) {
+        nextLeft = 0;
+        panXDirection = 1;
+      }
+      block.scrollLeft = Math.round(nextLeft);
+    }
   }
 
   function startCodePan() {
@@ -1230,16 +1288,15 @@
       return;
     }
     stopAutoPaging();
-    if (panFrame === null) {
-      panLast = 0;
-      panFrame = requestAnimationFrame(panTick);
+    if (panTimer === null) {
+      panTimer = setInterval(panStep, 50);
     }
   }
 
   function stopCodePan() {
-    if (panFrame !== null) {
-      cancelAnimationFrame(panFrame);
-      panFrame = null;
+    if (panTimer !== null) {
+      clearInterval(panTimer);
+      panTimer = null;
     }
   }
 
