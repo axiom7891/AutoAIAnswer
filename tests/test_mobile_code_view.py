@@ -13,8 +13,40 @@ def test_code_view_controls_exist() -> None:
     assert 'id="code-autopan"' in html
     assert "代码自动换行" in html
     assert "自动巡览" in html
-    assert 'value="11"' in html
+    assert 'value="auto"' in html
+    assert "自适应" in html
+    assert 'value="6"' in html
+    assert 'value="8"' in html
     assert 'value="16"' in html
+
+
+def test_auto_fit_font_is_implemented() -> None:
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    assert "function fitCodeFont()" in js
+    assert "const CODE_FIT_MIN = 6;" in js
+    assert "const CODE_FIT_MAX = 13;" in js
+    assert "while (size > CODE_FIT_MIN && outputEl.scrollHeight - outputEl.clientHeight > 2)" in js
+    assert "fitCodeFont();" in js
+
+
+def test_code_view_persists_to_desktop() -> None:
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "ai_screenshot_assistant"
+        / "ui"
+        / "main_window.py"
+    ).read_text(encoding="utf-8")
+
+    assert "function sendCodeViewSettings()" in js
+    assert 'type: "command.set_code_view"' in js
+    assert 'event.type === "code.view"' in js
+    assert "function applyCodeViewFromDesktop(payload)" in js
+    assert "phone/code_font" in source
+    assert "phone/code_wrap" in source
+    assert "def _publish_code_view(self)" in source
+    assert '"code.view"' in source
 
 
 def test_code_wrap_is_default_and_style_exists() -> None:

@@ -36,7 +36,10 @@
   const codeFontSelect = document.getElementById("code-font");
   const codePanToggle = document.getElementById("code-autopan");
   const CODE_VIEW_KEY = "codeView:settings";
-  let codeViewSettings = { wrap: true, font: "13", pan: true };
+  const CODE_FONT_CHOICES = ["auto", "6", "8", "10", "13", "16"];
+  const CODE_FIT_MAX = 13;
+  const CODE_FIT_MIN = 6;
+  let codeViewSettings = { wrap: true, font: "auto", pan: true };
   let panTimer = null;
   let panPauseUntil = 0;
   let panDirection = 1;
@@ -578,6 +581,7 @@
     const previousTop = outputEl.scrollTop;
     const nextText = String(text || "");
     renderFormattedText(outputEl, nextText);
+    fitCodeFont();
     outputEl.scrollTop = previousTop;
     updateOutputPager();
     if (!nextText.startsWith(chunkSourceText)) {
@@ -1005,7 +1009,21 @@
       applyRemoteScroll(payload);
     } else if (event.type === "answer.autopan") {
       applyRemoteAutoPan(payload);
+    } else if (event.type === "code.view") {
+      applyCodeViewFromDesktop(payload);
     }
+  }
+
+  function applyCodeViewFromDesktop(payload) {
+    const data = payload || {};
+    if (CODE_FONT_CHOICES.indexOf(String(data.font)) >= 0) {
+      codeViewSettings.font = String(data.font);
+    }
+    if (typeof data.wrap === "boolean") {
+      codeViewSettings.wrap = data.wrap;
+    }
+    saveCodeViewSettings();
+    applyCodeViewSettings();
   }
 
   function applyRemoteScroll(payload) {
@@ -1191,7 +1209,7 @@
       if (typeof raw.wrap === "boolean") {
         codeViewSettings.wrap = raw.wrap;
       }
-      if (["11", "13", "16"].indexOf(String(raw.font)) >= 0) {
+      if (CODE_FONT_CHOICES.indexOf(String(raw.font)) >= 0) {
         codeViewSettings.font = String(raw.font);
       }
       if (typeof raw.pan === "boolean") {
@@ -1204,18 +1222,50 @@
     localStorage.setItem(CODE_VIEW_KEY, JSON.stringify(codeViewSettings));
   }
 
+  function setCodeFontSize(px) {
+    document.documentElement.style.setProperty("--code-font-size", `${px}px`);
+  }
+
+  // 自适应：从最大字号开始往下试，选一个能把整段答案塞进答案框的最大字号
+  function fitCodeFont() {
+    if (codeViewSettings.font !== "auto") {
+      setCodeFontSize(Number(codeViewSettings.font) || CODE_FIT_MAX);
+      return;
+    }
+    if (!outputEl || outputEl.clientHeight <= 0) {
+      setCodeFontSize(CODE_FIT_MAX);
+      return;
+    }
+    setCodeFontSize(CODE_FIT_MAX);
+    let size = CODE_FIT_MAX;
+    while (size > CODE_FIT_MIN && outputEl.scrollHeight - outputEl.clientHeight > 2) {
+      size -= 1;
+      setCodeFontSize(size);
+    }
+  }
+
   function applyCodeViewSettings() {
     document.body.classList.toggle("code-wrap", codeViewSettings.wrap);
-    document.documentElement.style.setProperty("--code-font-size", `${codeViewSettings.font}px`);
-    if (codeWrapToggle) {
-      codeWrapToggle.checked = codeViewSettings.wrap;
-    }
     if (codeFontSelect) {
       codeFontSelect.value = codeViewSettings.font;
+    }
+    if (codeWrapToggle) {
+      codeWrapToggle.checked = codeViewSettings.wrap;
     }
     if (codePanToggle) {
       codePanToggle.checked = codeViewSettings.pan;
     }
+    fitCodeFont();
+  }
+
+  function sendCodeViewSettings() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    socket.send(JSON.stringify({
+      type: "command.set_code_view",
+      payload: { font: codeViewSettings.font, wrap: codeViewSettings.wrap }
+    }));
   }
 
   function pauseCodePan() {
@@ -1305,6 +1355,7 @@
       codeViewSettings.wrap = codeWrapToggle.checked;
       saveCodeViewSettings();
       applyCodeViewSettings();
+      sendCodeViewSettings();
     });
   }
   if (codeFontSelect) {
@@ -1312,6 +1363,7 @@
       codeViewSettings.font = codeFontSelect.value;
       saveCodeViewSettings();
       applyCodeViewSettings();
+      sendCodeViewSettings();
     });
   }
   if (codePanToggle) {
@@ -1490,7 +1542,10 @@
     outputExpand.addEventListener("click", function () {
       const expanded = outputEl.classList.toggle("expanded");
       outputExpand.textContent = expanded ? "还原" : "放大";
-      setTimeout(updateOutputPager, 80);
+      setTimeout(function () {
+        fitCodeFont();
+        updateOutputPager();
+      }, 80);
     });
   }
   outputEl.addEventListener("scroll", updateOutputPager, { passive: true });
@@ -1502,7 +1557,10 @@
   outputEl.addEventListener("pointerdown", pauseCodePan);
   document.addEventListener("keydown", pauseCodePan);
   document.addEventListener("keydown", handleAnswerShortcut);
-  window.addEventListener("resize", updateOutputPager);
+  window.addEventListener("resize", function () {
+    fitCodeFont();
+    updateOutputPager();
+  });
 
   renderPreviewList();
   updateOutputPager();

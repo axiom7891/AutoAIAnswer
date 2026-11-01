@@ -157,6 +157,7 @@ async def _handle_mobile_message(session: Any, message: str) -> None:
         "command.save_prompt",
         "command.set_model_tier",
         "command.get_model",
+        "command.set_code_view",
     }:
         return
     if session.desktop_commands is not None:
@@ -169,6 +170,10 @@ async def _handle_mobile_message(session: Any, message: str) -> None:
 def _mobile_command_payload(data: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {"source": "mobile"}
     source_payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+    if data.get("type") == "command.set_code_view":
+        payload["font"] = str(source_payload.get("font") or "auto")[:16]
+        payload["wrap"] = bool(source_payload.get("wrap", True))
+        return payload
     if data.get("type") == "command.save_prompt":
         if isinstance(source_payload.get("text"), str):
             payload["text"] = source_payload["text"]

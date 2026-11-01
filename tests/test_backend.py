@@ -89,6 +89,24 @@ def test_desktop_events_reach_mobile_websocket() -> None:
     assert received["event_id"] == 1
 
 
+def test_mobile_code_view_setting_reaches_desktop() -> None:
+    client = TestClient(app)
+    session = client.post("/sessions").json()
+    session_id = session["session_id"]
+
+    with client.websocket_connect(f"/ws/desktop-commands/{session_id}") as desktop_commands:
+        with client.websocket_connect(f"/ws/mobile/{session_id}") as mobile:
+            mobile.receive_json()
+            mobile.send_text(
+                '{"type":"command.set_code_view","payload":{"font":"8","wrap":false}}'
+            )
+            command = desktop_commands.receive_json()
+
+    assert command["type"] == "command.set_code_view"
+    assert command["payload"]["font"] == "8"
+    assert command["payload"]["wrap"] is False
+
+
 def test_scroll_command_from_desktop_reaches_mobile() -> None:
     client = TestClient(app)
     session = client.post("/sessions").json()

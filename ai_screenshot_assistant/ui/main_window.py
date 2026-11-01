@@ -1395,6 +1395,19 @@ class MainWindow(QMainWindow):
             return
         if command.get("type") == "command.get_model":
             self._publish_model_changed()
+            self._publish_code_view()
+            return
+        if command.get("type") == "command.set_code_view":
+            payload = command.get("payload")
+            data = payload if isinstance(payload, dict) else {}
+            font = str(data.get("font") or "auto")
+            if font not in {"auto", "6", "8", "10", "13", "16"}:
+                font = "auto"
+            wrap = bool(data.get("wrap", True))
+            self.app_settings.setValue("phone/code_font", font)
+            self.app_settings.setValue("phone/code_wrap", wrap)
+            self.app_settings.sync()
+            self._log(f"手机代码显示：字号 {font}，自动换行 {'开' if wrap else '关'}")
             return
         if command.get("type") == "command.fullscreen":
             payload = command.get("payload")
@@ -1568,6 +1581,12 @@ class MainWindow(QMainWindow):
                 self.model_tier_combo.setCurrentIndex(index)
             self.model_tier_combo.blockSignals(False)
         self._refresh_provider_label()
+
+    def _publish_code_view(self) -> None:
+        font = str(self.app_settings.value("phone/code_font", "auto") or "auto")
+        wrap_value = self.app_settings.value("phone/code_wrap", True)
+        wrap = wrap_value if isinstance(wrap_value, bool) else str(wrap_value).lower() != "false"
+        self._send_mobile_event("code.view", {"font": font, "wrap": wrap})
 
     def _publish_model_changed(self) -> None:
         if self.workflow is None:
