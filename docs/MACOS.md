@@ -39,12 +39,13 @@ chmod +x build_macos.sh
 
 ## 2.1 用 GitHub Actions 自动打包（打 tag 就出 zip）
 
-仓库里已经带好 `.github/workflows/build-macos.yml`：推到 GitHub 后，打 `v*` 标签就会在 macOS 跑测试、打 App、签名、上传 zip 并挂到 Release。
+仓库里已经带好 `.github/workflows/build-macos.yml`：推到 GitHub 后，打 `v*` 标签就会在 macOS 跑测试、打 App、签名、上传 zip 并挂到 Release。已实测可用：v0.2.64 的产物见 https://github.com/axiom7891/AutoAIAnswer/releases/tag/v0.2.64 。
 
 触发方式：
 
-- 打 tag：`git tag v0.2.63 && git push origin v0.2.63`
-- 或在 Actions 页面点 **Run workflow**（只留 artifacts，不创建 Release；可勾选同时构建 Intel 版）
+- 打 tag：`git tag v0.2.64 && git push origin v0.2.64`
+- 推到 `main`：只跑测试与打包，用于提前发现 macOS 专属问题（不建 Release）
+- 或在 Actions 页面点 **Run workflow**（只留 artifacts；可勾选同时构建 Intel 版）
 
 流程与产物：
 

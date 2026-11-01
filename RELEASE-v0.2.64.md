@@ -17,4 +17,10 @@
 
 - 本地：340 项通过，1 项跳过。
 - GitHub Actions（`macos-14`，run 41302465851）：`Run tests`、`Build QQMusic.app`、`Checksums`、`Upload artifacts` 全部 success，产出 `QQMusic-macOS-arm64.zip`。
-- `v0.2.64` 标签会再跑一次并挂到 Release；macOS 真机首次运行仍需允许「屏幕录制」与「辅助功能」。
+- 发版（tag `v0.2.64`，run 41302735555）：构建与 `Attach to GitHub Release` 均 success。
+
+## 产物
+
+- Release：https://github.com/axiom7891/AutoAIAnswer/releases/tag/v0.2.64
+- 资产：`QQMusic-macOS-arm64.zip`（152,386,190 字节，SHA256 `2552a519…02f2b5b9`）、`SHA256SUMS-arm64.txt`（内容与实际文件一致）
+- macOS 真机首次运行仍需允许「屏幕录制」与「辅助功能」。
