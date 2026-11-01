@@ -201,8 +201,6 @@ class MouseRoiListener:
 
     def _is_ctrl_shift_held(self) -> bool:
         if sys.platform == "win32":
-            import ctypes
-
             user32 = ctypes.WinDLL("user32", use_last_error=True)
             user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
             user32.GetAsyncKeyState.restype = ctypes.c_short

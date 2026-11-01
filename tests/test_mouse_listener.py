@@ -1,6 +1,22 @@
 from ai_screenshot_assistant.input.mouse_listener import MouseRoiListener
 
 
+def test_ctrl_shift_probe_is_safe_off_windows(monkeypatch) -> None:
+    """macOS 分支不能因为函数内的 import ctypes 而抛 UnboundLocalError。"""
+
+    listener = MouseRoiListener(lambda x, y: None, lambda x, y: None)
+    monkeypatch.setattr("ai_screenshot_assistant.input.mouse_listener.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "ai_screenshot_assistant.input.mouse_listener.ctypes.util.find_library",
+        lambda name: None,
+    )
+
+    assert listener._is_ctrl_shift_held() is False
+
+    monkeypatch.setattr("ai_screenshot_assistant.input.mouse_listener.sys.platform", "linux")
+    assert listener._is_ctrl_shift_held() is False
+
+
 def test_long_press_threshold_is_two_seconds(monkeypatch) -> None:
     long_clicks = []
     short_clicks = []

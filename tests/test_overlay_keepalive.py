@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
 
-from ai_screenshot_assistant.ui.streaming_overlay import FRONT_INTERVAL_MS, StreamingOverlay
+from ai_screenshot_assistant.ui.streaming_overlay import (
+    FRONT_INTERVAL_MS,
+    MAC_FRONT_INTERVAL_MS,
+    StreamingOverlay,
+)
+
+
+def expected_interval() -> int:
+    return MAC_FRONT_INTERVAL_MS if sys.platform == "darwin" else FRONT_INTERVAL_MS
 
 
 def make_overlay(tmp_path: Path) -> StreamingOverlay:
@@ -15,7 +24,7 @@ def make_overlay(tmp_path: Path) -> StreamingOverlay:
 def test_front_timer_setup(tmp_path: Path, qapp) -> None:
     overlay = make_overlay(tmp_path)
     try:
-        assert overlay._front_timer.interval() == FRONT_INTERVAL_MS
+        assert overlay._front_timer.interval() == expected_interval()
         overlay.show()
         qapp.processEvents()
         assert overlay._front_timer.isActive()
