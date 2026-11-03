@@ -56,6 +56,14 @@ class AnalysisCancelled(Exception):
     """Raised internally when a newer screenshot replaces a streaming request."""
 
 
+class ModelUnavailableError(RuntimeError):
+    """模型 ID 不存在 / 无权调用（HTTP 400、404、422），可自动回退默认路线。"""
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class CancellationToken:
     def __init__(self) -> None:
         self._cancelled = threading.Event()
@@ -311,8 +319,16 @@ class VisionClient:
                 f"豆包模型未开通或无权调用（{self.provider.model}）。"
                 "请到火山方舟开通该模型后再试。"
             )
+        message = (
+            f"{self.provider.name} 调用失败（HTTP {response.status_code}，{self.provider.model}）：{detail}"
+            if detail
+            else f"{self.provider.name} 调用失败（HTTP {response.status_code}，{self.provider.model}）"
+        )
+        if response.status_code in {400, 404, 422} and not self._is_doubao():
+            # 模型 ID 写错 / 未开通时自动回退默认路线，避免一次请求直接失败。
+            return ModelUnavailableError(message, response.status_code)
         if detail:
-            return RuntimeError(f"{self.provider.name} 调用失败（HTTP {response.status_code}，{self.provider.model}）：{detail}")
+            return RuntimeError(message)
         return exc
 
     @staticmethod
@@ -511,6 +527,16 @@ class FailoverVisionClient:
             "doubao": self.doubao,
         }[name]
 
+    def _switch_to_default_route(self) -> bool:
+        """模型 ID 不存在/未开通时，回退到默认路线重试一次。"""
+        if getattr(self, "_requested_tier", DEFAULT_MODEL_TIER) == DEFAULT_MODEL_TIER:
+            return False
+        route = MODEL_ROUTES.get(DEFAULT_MODEL_TIER)
+        if route is None or not self._has_provider(route.provider):
+            return False
+        self.apply_model_tier(DEFAULT_MODEL_TIER, notify=True)
+        return True
+
     def _initial_provider(self) -> str:
         if self._openrouter_has_key:
             return "openrouter"
@@ -535,6 +561,7 @@ class FailoverVisionClient:
         return [route_id for route_id, route in MODEL_ROUTES.items() if self._has_provider(route.provider)]
 
     def apply_model_tier(self, tier: str, *, notify: bool = False) -> ModelChoice:
+        self._requested_tier = str(tier or DEFAULT_MODEL_TIER)
         choice = resolve_model_choice(
             tier,
             has_deepseek=self._deepseek_has_key,
@@ -580,6 +607,17 @@ class FailoverVisionClient:
         if self.current_provider == "none":
             raise RuntimeError("当前路线未配置 Key")
         try:
+            yield from self._stream_from_client(
+                self._client_for(self.current_provider),
+                png_images,
+                user_text,
+                conversation,
+                cancel_token,
+            )
+            return
+        except ModelUnavailableError:
+            if not self._switch_to_default_route():
+                raise
             yield from self._stream_from_client(
                 self._client_for(self.current_provider),
                 png_images,

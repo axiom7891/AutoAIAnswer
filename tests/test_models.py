@@ -19,6 +19,9 @@ from ai_screenshot_assistant.ai.models import (
     ROUTE_DOUBAO_TURBO,
     ROUTE_OPENROUTER_GPT_4O,
     ROUTE_OPENROUTER_GPT_4_1,
+    ROUTE_OPENROUTER_DEEPSEEK_V41,
+    ROUTE_OPENROUTER_CLAUDE_OPUS_55,
+    ROUTE_OPENROUTER_GPT_6_LUNA,
     ROUTE_OPENROUTER_QWEN_PLUS,
     ROUTE_OPENROUTER_GLM,
     ROUTE_OPENROUTER_MINIMAX,
@@ -74,9 +77,14 @@ def test_removed_openrouter_routes_migrate_without_removing_other_providers() ->
         assert normalize_model_tier(old) == new
         assert resolve_model_choice(old, has_openrouter=True, has_deepseek=False).model == MODEL_ROUTES[new].model
     routes = [r for r in MODEL_ROUTES.values() if r.provider == "openrouter"]
-    assert len(routes) == len({r.model for r in routes}) == 8
+    assert len(routes) == len({r.model for r in routes}) == 11
     foreign = [r for r in routes if not is_chinese_model(r.model)]
-    assert {r.route_id for r in foreign} == {ROUTE_OPENROUTER_GPT_4O, ROUTE_OPENROUTER_GPT_4_1}
+    assert {r.route_id for r in foreign} == {
+        ROUTE_OPENROUTER_GPT_4O,
+        ROUTE_OPENROUTER_GPT_4_1,
+        ROUTE_OPENROUTER_CLAUDE_OPUS_55,
+        ROUTE_OPENROUTER_GPT_6_LUNA,
+    }
     assert all(r.allow_foreign for r in foreign)
     assert sum(r.provider == "doubao" for r in MODEL_ROUTES.values()) == 4
     assert MODEL_ROUTES[ROUTE_DEEPSEEK_FLASH].model == DEEPSEEK_VISION_MODEL
@@ -226,6 +234,9 @@ def test_route_options_list_explicit_models() -> None:
         ROUTE_OPENROUTER_MINIMAX,
         ROUTE_OPENROUTER_GPT_4O,
         ROUTE_OPENROUTER_GPT_4_1,
+    ROUTE_OPENROUTER_DEEPSEEK_V41,
+    ROUTE_OPENROUTER_CLAUDE_OPUS_55,
+    ROUTE_OPENROUTER_GPT_6_LUNA,
         ROUTE_DEEPSEEK_FLASH,
     ]
     assert "好" not in labels

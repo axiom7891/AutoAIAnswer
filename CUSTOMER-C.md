@@ -33,7 +33,7 @@
 - 开关默认开启，设置项为 `capture/repair_enabled`，可用 `CAPTURE_REPAIR=0` 关闭；`CAPTURE_REPAIR_ATTEMPTS`、`CAPTURE_REPAIR_SAMPLES`、`CAPTURE_REPAIR_INJECT`、`CAPTURE_REPAIR_CONTENT` 控制轮数、每轮帧数、是否注入与是否做渲染比对。
 - 悬浮字幕新增置顶看门狗（每 150ms 检查是否被全屏窗口压住，被压住就重新置顶）与位置兜底（分辨率/DPI 变化后拉回屏幕内）；捕获排除保持不变，共享/录屏里仍看不到。
 - 新增快捷键 `Ctrl+Alt+O` 显示/隐藏悬浮字幕；鼠标中键长按 1 秒开关「自动截全屏」。
-- 新增 OpenRouter GPT-4o / GPT-4.1 两条路线（复用 OpenRouter Key），其余路线仍只走国产模型。
+- 新增 OpenRouter GPT-4o / GPT-4.1 两条路线（复用 OpenRouter Key），其余路线仍只走国产模型。v0.2.73 再加三条：deepseek/deepseek-v4.1-flash-1017、anthropic/claude-opus-5.5、openai/gpt-6-luna；模型不存在（400/404/422）时自动回退默认路线重试一次，不会让截图直接失败。
 - 模型下拉框去掉「（最快 / 准确一般）」等括号备注；删除「截图异常自动修复」下方的界面说明文字。
 - 手机端答案框新增键盘快捷键：`Shift+W/S` 上下翻页、`Shift+A/D` 左右滚动代码块（优先滚视口中央的代码块）；输入框内不触发，手动按键会暂停自动翻页，答案区下方有提示行。
 - 手机端每个代码块新增独立「复制代码」按钮；答案区新增「每 N 字符分段复制」（20–2000，记忆设置）+「复制下一段」+ 进度「x / y 段」+「从头」，方便往有字数限制的作答框里分次粘贴。
@@ -76,7 +76,7 @@ macOS 上的状态机和回归测试不能替代以上 Windows 全局键盘钩�
 - v0.2.66 打包后同样实拉校验：`app.js` 43,886 字节（含 `复制代码`、`copyNextChunk`、`chunkSizeValue`）、`index.html` 5,450 字节（含分段复制控件）、`style.css` 11,203 字节（含 `.code-shell` / `.chunk-copy`）；`node --check app.js` 通过。
 - 字幕置顶：另起置顶窗口压住字幕后，150ms 看门狗可把字幕重新顶回最上层；客户端每 200ms 抢顶层时约 50% 采样保持最上。独占全屏无法覆盖，日志会提示改窗口化或用手机。
 - 快捷键：中键 1 秒触发、0.5 秒不触发；`Ctrl+Alt+O` 只触发一次且不会误触发 Ctrl 单键截图。
-- 模型：13 条路线，GPT-4o / GPT-4.1 复用 OpenRouter Key；下拉与手机端均无括号备注。
+- 模型：16 条路线，GPT-4o / GPT-4.1 / Claude Opus 5.5 / GPT-6 Luna 复用 OpenRouter Key；下拉与手机端均无括号备注。
 - WDA 透明窗口实机端到端（v0.2.61）：720×460 答题窗口设 `WDA_EXCLUDEFROMCAPTURE`（affinity 0x11），PrintWindow 自身只有 detail=0.0（全黑）→ 状态兜底判「内容缺失」→ 注入解除捕获排除 → 重拍细节 20.5 → 53.5，尝试 2 次且来源为桌面抓取 → 结束后 affinity 还原 0x11。
 - 诊断文件实测：窗口表列出 `hwnd=0x60790 affinity=0x11`、`PrintWindow=成功 detail=0.0`，可直接判断「必须解除保护后重拍」。
 - 透明窗口实机端到端：独立进程建 600×400 答题页并 `setWindowOpacity(0)`，纯截图细节 19.7（只有背景）→ 判定「内容缺失」→ 探测到「图层 alpha=0」→ alpha 提到 255 → 重拍细节 51.2，日志「截图异常：内容缺失；已注入补丁：还原图层不透明度、强制重绘；重拍 1 次；已恢复可用画面」→ 结束后 alpha 还原为 0。

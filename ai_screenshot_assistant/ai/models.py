@@ -19,6 +19,9 @@ ROUTE_OPENROUTER_GLM = "openrouter-glm"
 ROUTE_OPENROUTER_MINIMAX = "openrouter-minimax"
 ROUTE_OPENROUTER_GPT_4O = "openrouter-gpt-4o"
 ROUTE_OPENROUTER_GPT_4_1 = "openrouter-gpt-4-1"
+ROUTE_OPENROUTER_DEEPSEEK_V41 = "openrouter-deepseek-v41"
+ROUTE_OPENROUTER_CLAUDE_OPUS_55 = "openrouter-claude-opus-55"
+ROUTE_OPENROUTER_GPT_6_LUNA = "openrouter-gpt-6-luna"
 ROUTE_DEEPSEEK_FLASH = "deepseek-flash"
 DEFAULT_MODEL_TIER = ROUTE_OPENROUTER_QWEN_235B
 
@@ -37,6 +40,9 @@ OPENROUTER_GLM = "z-ai/glm-4.6v"
 OPENROUTER_MINIMAX = "minimax/minimax-m3"
 OPENROUTER_GPT_4O = "openai/gpt-4o"
 OPENROUTER_GPT_4_1 = "openai/gpt-4.1"
+OPENROUTER_DEEPSEEK_V41 = "deepseek/deepseek-v4.1-flash-1017"
+OPENROUTER_CLAUDE_OPUS_55 = "anthropic/claude-opus-5.5"
+OPENROUTER_GPT_6_LUNA = "openai/gpt-6-luna"
 
 OPENROUTER_TIER_MODELS = {
     TIER_GOOD: OPENROUTER_QWEN_235B,
@@ -96,6 +102,26 @@ MODEL_ROUTES: dict[str, ModelRoute] = {
         OPENROUTER_GPT_4_1,
         allow_foreign=True,
     ),
+    ROUTE_OPENROUTER_DEEPSEEK_V41: ModelRoute(
+        ROUTE_OPENROUTER_DEEPSEEK_V41,
+        "OpenRouter DeepSeek V4.1",
+        "openrouter",
+        OPENROUTER_DEEPSEEK_V41,
+    ),
+    ROUTE_OPENROUTER_CLAUDE_OPUS_55: ModelRoute(
+        ROUTE_OPENROUTER_CLAUDE_OPUS_55,
+        "OpenRouter Claude Opus 5.5",
+        "openrouter",
+        OPENROUTER_CLAUDE_OPUS_55,
+        allow_foreign=True,
+    ),
+    ROUTE_OPENROUTER_GPT_6_LUNA: ModelRoute(
+        ROUTE_OPENROUTER_GPT_6_LUNA,
+        "OpenRouter GPT-6 Luna",
+        "openrouter",
+        OPENROUTER_GPT_6_LUNA,
+        allow_foreign=True,
+    ),
     ROUTE_DEEPSEEK_FLASH: ModelRoute(
         ROUTE_DEEPSEEK_FLASH, "DeepSeek 官方", "deepseek", DEEPSEEK_VISION_MODEL
     ),
@@ -152,6 +178,18 @@ ROUTE_ALIASES = {
     OPENROUTER_GPT_4_1: ROUTE_OPENROUTER_GPT_4_1,
     ROUTE_OPENROUTER_GPT_4O: ROUTE_OPENROUTER_GPT_4O,
     ROUTE_OPENROUTER_GPT_4_1: ROUTE_OPENROUTER_GPT_4_1,
+    "deepseek/deepseek-v4.1-flash-1017": ROUTE_OPENROUTER_DEEPSEEK_V41,
+    "deepseek-v4.1-flash-1017": ROUTE_OPENROUTER_DEEPSEEK_V41,
+    OPENROUTER_DEEPSEEK_V41: ROUTE_OPENROUTER_DEEPSEEK_V41,
+    ROUTE_OPENROUTER_DEEPSEEK_V41: ROUTE_OPENROUTER_DEEPSEEK_V41,
+    "anthropic/claude-opus-5.5": ROUTE_OPENROUTER_CLAUDE_OPUS_55,
+    "claude-opus-5.5": ROUTE_OPENROUTER_CLAUDE_OPUS_55,
+    OPENROUTER_CLAUDE_OPUS_55: ROUTE_OPENROUTER_CLAUDE_OPUS_55,
+    ROUTE_OPENROUTER_CLAUDE_OPUS_55: ROUTE_OPENROUTER_CLAUDE_OPUS_55,
+    "openai/gpt-6-luna": ROUTE_OPENROUTER_GPT_6_LUNA,
+    "gpt-6-luna": ROUTE_OPENROUTER_GPT_6_LUNA,
+    OPENROUTER_GPT_6_LUNA: ROUTE_OPENROUTER_GPT_6_LUNA,
+    ROUTE_OPENROUTER_GPT_6_LUNA: ROUTE_OPENROUTER_GPT_6_LUNA,
 }
 
 TIER_LABELS = {

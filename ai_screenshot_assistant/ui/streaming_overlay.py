@@ -106,7 +106,7 @@ class StreamingOverlay(QWidget):
             self.move(area.left() + 20, area.bottom() - 180)
 
     def set_opacity_percent(self, percent: int) -> None:
-        self._opacity_percent = max(15, min(100, int(percent)))
+        self._opacity_percent = max(0, min(100, int(percent)))
         self._apply_native_flags()
 
     def set_font_px(self, size: int) -> None:
