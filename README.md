@@ -15,6 +15,12 @@ macOS 版功能差异、权限设置与打包细节见 [docs/MACOS.md](docs/MACO
 
 **macOS 上做不到的一项**：截图异常修复（解除别的程序的防截屏）。macOS 的 `sharingType` 只能由窗口自己改，系统不允许其他进程修改，因此该开关在 Mac 上置灰；其余功能（截图、字幕、题库、手机端、模型、快捷键）保持一致。
 
+## 控制台界面
+
+深色卡片式布局，主操作一键可达；可在「外观」里切浅色主题、换字体、改字幕文字颜色。
+
+![控制台界面](docs/ui-preview.png)
+
 ## 直接下载
 
 [下载 Windows 版 AutoAIAnswer-Windows.zip](https://github.com/SAYURIqvq/AutoAIAnswer/releases/latest/download/AutoAIAnswer-Windows.zip)

@@ -67,6 +67,7 @@ from ai_screenshot_assistant.ui.auto_capture import (
 )
 from ai_screenshot_assistant.ui.streaming_overlay import StreamingOverlay
 from ai_screenshot_assistant.ui.native_capture import apply_window_capture_exclusion
+from ai_screenshot_assistant.ui.theme import apply_app_theme
 from ai_screenshot_assistant.utils.qrcode_image import QR_DISPLAY_PX, pair_qr_png_bytes
 from ai_screenshot_assistant.websocket_client import DesktopWebSocketPublisher
 
@@ -126,8 +127,8 @@ class MainWindow(QMainWindow):
             str(self.app_settings.value("providers/model_tier", settings.model_tier) or DEFAULT_MODEL_TIER)
         )
         self.system_prompt = str(self.app_settings.value("prompt/system", VISION_PROMPT) or VISION_PROMPT)
-        self.ui_font_family = str(self.app_settings.value("appearance/font_family", "Times New Roman") or "Times New Roman")
-        self.ui_theme = str(self.app_settings.value("appearance/theme", "light") or "light")
+        self.ui_font_family = str(self.app_settings.value("appearance/font_family", "系统默认") or "系统默认")
+        self.ui_theme = str(self.app_settings.value("appearance/theme", "dark") or "dark")
 
         self.signals = UiSignals()
         self.signals.local_update.connect(lambda callback: callback())
@@ -209,7 +210,9 @@ class MainWindow(QMainWindow):
         )
 
         self.status_label = QLabel("状态：准备中")
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self.provider_label = QLabel("当前模型：未配置")
+        self.provider_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self.deepseek_key_input = QLineEdit(self.deepseek_key)
         self.deepseek_key_input.setEchoMode(QLineEdit.Normal)
         self.deepseek_key_input.setPlaceholderText("可选，DeepSeek Flash 看图")
@@ -324,6 +327,13 @@ class MainWindow(QMainWindow):
             "Ctrl+Shift+鼠标左键：连续截图；Ctrl+Shift+鼠标右键：分析缓存。快捷键在控制台最小化到托盘时仍生效。"
         )
         self.multi_hotkeys_toggle.toggled.connect(self._set_multi_hotkeys_enabled)
+        self.remote_arrows_toggle = QCheckBox("方向键 ↑ ↓ ← → 直接遥控手机答案框（不用组合键）")
+        self.remote_arrows_toggle.setChecked(self._settings_bool("phone/arrow_remote", True))
+        self.remote_arrows_toggle.setToolTip(
+            "勾选后，电脑上按方向键即可滚动手机端答案框：↑/↓ 翻页，←/→ 代码左右滚。"
+            "不需要按住 Ctrl 或 Alt；其他软件里的方向键仍照常使用。"
+        )
+        self.remote_arrows_toggle.toggled.connect(self.set_remote_arrows_enabled)
         self.retry_toggle = QCheckBox("分析超时自动重试")
         self.retry_toggle.setChecked(self.retry_enabled)
         self.retry_toggle.setToolTip("截图后超过设定秒数仍未返回答案时，自动用同一张截图重新分析。")
@@ -371,7 +381,8 @@ class MainWindow(QMainWindow):
         self.qr_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.qr_label.setContentsMargins(12, 12, 12, 12)
         self.qr_label.setFixedSize(QR_DISPLAY_PX + 24, QR_DISPLAY_PX + 24)
-        self.qr_label.setStyleSheet("QLabel { background: #ffffff; border-radius: 8px; }")
+        self.qr_label.setStyleSheet("QLabel { background: #ffffff; border-radius: 12px; }")
+        self.qr_label.setVisible(False)
         self.logs = QTextEdit()
         self.logs.setReadOnly(True)
         self.logs.setMinimumHeight(72)
@@ -382,130 +393,240 @@ class MainWindow(QMainWindow):
         self.clear_chat_button.clicked.connect(self._clear_conversation)
 
         provider_form = QFormLayout()
+        provider_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        provider_form.setHorizontalSpacing(14)
+        provider_form.setVerticalSpacing(8)
         provider_form.addRow("DeepSeek Key（可选）", self.deepseek_key_input)
         provider_form.addRow("OpenRouter Key（可选）", self.openrouter_key_input)
         provider_form.addRow("豆包 Key（可选）", self.doubao_key_input)
         provider_form.addRow("模型", self.model_tier_combo)
 
         save_row = QHBoxLayout()
+        save_row.setSpacing(10)
         save_row.addWidget(self.save_providers_button)
         save_row.addWidget(self.save_status, 1)
 
-        layout = QVBoxLayout()
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.provider_label)
-        layout.addLayout(provider_form)
-        layout.addLayout(save_row)
         appearance_row = QHBoxLayout()
+        appearance_row.setSpacing(8)
         appearance_row.addWidget(QLabel("字体"))
         appearance_row.addWidget(self.font_combo)
         appearance_row.addWidget(QLabel("控制台主题"))
         appearance_row.addWidget(self.theme_combo)
         appearance_row.addWidget(QLabel("字幕文字"))
         appearance_row.addWidget(self.text_color_combo)
-        layout.addLayout(appearance_row)
-        layout.addWidget(self.overlay_toggle)
-        layout.addWidget(self.console_capture_toggle)
+        appearance_row.addStretch(1)
+
         repair_row = QHBoxLayout()
+        repair_row.setSpacing(10)
         repair_row.addWidget(self.repair_toggle)
         repair_row.addWidget(self.capture_diagnostics_button)
         repair_row.addStretch(1)
-        layout.addLayout(repair_row)
+
         opacity_row = QHBoxLayout()
         opacity_row.addWidget(self.opacity_label)
         opacity_row.addWidget(self.opacity_slider, 1)
-        layout.addLayout(opacity_row)
+
         font_row = QHBoxLayout()
         font_row.addWidget(self.font_label)
         font_row.addWidget(self.font_slider, 1)
-        layout.addLayout(font_row)
-        layout.addWidget(self.region_gesture_toggle)
-        layout.addWidget(self.fullscreen_gesture_toggle)
-        layout.addWidget(self.fullscreen_button)
+
         multi_row = QHBoxLayout()
+        multi_row.setSpacing(10)
         multi_row.addWidget(self.multi_capture_button)
         multi_row.addWidget(self.analyze_pending_button)
         multi_row.addWidget(self.clear_pending_button)
         multi_row.addStretch(1)
-        layout.addLayout(multi_row)
+
         multi_hint = QLabel("资料分析：滚动页面后连续截图（最多 5 张），再点「分析缓存」一起发送。")
+        multi_hint.setObjectName("CardHint")
         multi_hint.setWordWrap(True)
-        layout.addWidget(multi_hint)
+
         hotkey_row = QHBoxLayout()
+        hotkey_row.setSpacing(10)
         hotkey_row.addWidget(self.multi_hotkeys_toggle)
         hotkey_row.addStretch(1)
-        layout.addLayout(hotkey_row)
-        self.remote_arrows_toggle = QCheckBox("方向键 ↑ ↓ ← → 直接遥控手机答案框（不用组合键）")
-        self.remote_arrows_toggle.setChecked(self._settings_bool("phone/arrow_remote", True))
-        self.remote_arrows_toggle.setToolTip(
-            "勾选后，电脑上按方向键即可滚动手机端答案框：↑/↓ 翻页，←/→ 代码左右滚。"
-            "不需要按住 Ctrl 或 Alt；其他软件里的方向键仍照常使用。"
-        )
-        self.remote_arrows_toggle.toggled.connect(self.set_remote_arrows_enabled)
-        layout.addWidget(self.remote_arrows_toggle)
+
         hotkey_hint = QLabel(
-            "快捷键：Ctrl+Shift+左键 连续截图；Ctrl+Shift+右键 分析缓存；"
-            "Ctrl+Alt+O 显示/隐藏字幕；鼠标中键长按 1 秒 开关自动截屏；"
-            "方向键 ↑↓←→ 滚动手机答案框（↑↓ 翻页、←→ 代码左右滚）。"
+            "Ctrl+Shift+左键 连续截图 · Ctrl+Shift+右键 分析缓存 · "
+            "Ctrl+Alt+O 显示/隐藏字幕 · 鼠标中键长按 1 秒 开关自动截屏 · "
+            "方向键 ↑↓←→ 滚动手机答案框"
         )
+        hotkey_hint.setObjectName("CardHint")
         hotkey_hint.setWordWrap(True)
-        layout.addWidget(hotkey_hint)
+
         auto_capture_row = QHBoxLayout()
+        auto_capture_row.setSpacing(8)
         auto_capture_row.addWidget(self.auto_capture_toggle)
         auto_capture_row.addWidget(QLabel("每"))
         auto_capture_row.addWidget(self.auto_capture_interval_spin)
         auto_capture_row.addStretch(1)
-        layout.addLayout(auto_capture_row)
+
         retry_row = QHBoxLayout()
+        retry_row.setSpacing(8)
         retry_row.addWidget(self.retry_toggle)
+        retry_row.addWidget(QLabel("超过"))
+        retry_row.addWidget(self.retry_timeout_spin)
+        retry_row.addWidget(QLabel("仍未出答案时自动重试"))
+        retry_row.addWidget(self.retry_attempts_spin)
         retry_row.addStretch(1)
-        layout.addLayout(retry_row)
-        retry_detail_row = QHBoxLayout()
-        retry_detail_row.addWidget(QLabel("超过"))
-        retry_detail_row.addWidget(self.retry_timeout_spin)
-        retry_detail_row.addWidget(QLabel("仍未出答案时，自动重试"))
-        retry_detail_row.addWidget(self.retry_attempts_spin)
-        retry_detail_row.addStretch(1)
-        layout.addLayout(retry_detail_row)
+
         bank_row = QHBoxLayout()
+        bank_row.setSpacing(10)
         bank_row.addWidget(self.bank_toggle)
         bank_row.addWidget(self.bank_status_label, 1)
-        layout.addLayout(bank_row)
         bank_buttons = QHBoxLayout()
+        bank_buttons.setSpacing(10)
         bank_buttons.addWidget(self.upload_bank_button)
         bank_buttons.addWidget(self.clear_bank_button)
         bank_buttons.addStretch(1)
-        layout.addLayout(bank_buttons)
+
+        mobile_row = QHBoxLayout()
+        mobile_row.setSpacing(10)
+        mobile_row.addWidget(self.mobile_label, 1)
+        self.copy_mobile_button = QPushButton("复制网址")
+        self.copy_mobile_button.setProperty("class", "ghost")
+        self.copy_mobile_button.setEnabled(False)
+        self.copy_mobile_button.clicked.connect(self._copy_mobile_url)
+        mobile_row.addWidget(self.copy_mobile_button)
+
+        qr_wrap = QWidget()
+        qr_wrap.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        qr_layout = QVBoxLayout(qr_wrap)
+        qr_layout.setContentsMargins(0, 6, 0, 6)
+        qr_layout.addWidget(self.qr_label, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        gesture_hint = QLabel(self._gesture_hint_text())
+        gesture_hint.setObjectName("CardHint")
+        gesture_hint.setWordWrap(True)
+
         if sys.platform == "win32":
             self.ctrl_capture_toggle = QCheckBox("Ctrl 单键松开截全屏搜题（客户 C）")
             self.ctrl_capture_toggle.setChecked(self.ctrl_capture_enabled)
             self.ctrl_capture_toggle.toggled.connect(self._set_ctrl_capture_enabled)
-            layout.addWidget(self.ctrl_capture_toggle)
-        mobile_row = QHBoxLayout()
-        mobile_row.addWidget(self.mobile_label, 1)
-        self.copy_mobile_button = QPushButton("复制网址")
-        self.copy_mobile_button.setEnabled(False)
-        self.copy_mobile_button.clicked.connect(self._copy_mobile_url)
-        mobile_row.addWidget(self.copy_mobile_button)
-        layout.addLayout(mobile_row)
-        qr_wrap = QWidget()
-        qr_wrap.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        qr_layout = QVBoxLayout(qr_wrap)
-        qr_layout.setContentsMargins(0, 8, 0, 8)
-        qr_layout.addWidget(self.qr_label, 0, Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(qr_wrap, 0, Qt.AlignmentFlag.AlignHCenter)
-        gesture_hint = QLabel(self._gesture_hint_text())
-        gesture_hint.setWordWrap(True)
-        layout.addWidget(gesture_hint)
-        layout.addWidget(self.clear_chat_button)
-        layout.addWidget(self.logs)
-        layout.addWidget(QLabel("系统 Prompt（可编辑，不限字数）"))
-        layout.addWidget(self.prompt_input)
-        layout.addWidget(self.save_prompt_button)
-        layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)
+
+        self.fullscreen_button.setProperty("class", "primary")
+        self.fullscreen_button.setMinimumHeight(40)
+        self.multi_capture_button.setProperty("class", "ghost")
+        self.analyze_pending_button.setProperty("class", "ghost")
+        self.clear_pending_button.setProperty("class", "ghost")
+        self.save_providers_button.setProperty("class", "primary")
+        self.save_prompt_button.setProperty("class", "primary")
+        self.upload_bank_button.setProperty("class", "ghost")
+        self.clear_bank_button.setProperty("class", "ghost")
+        self.clear_chat_button.setProperty("class", "ghost")
+        for checkbox in (
+            self.overlay_toggle,
+            self.console_capture_toggle,
+            self.repair_toggle,
+            self.remote_arrows_toggle,
+            self.region_gesture_toggle,
+            self.fullscreen_gesture_toggle,
+            self.multi_hotkeys_toggle,
+            self.retry_toggle,
+            self.auto_capture_toggle,
+            self.bank_toggle,
+        ):
+            checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        root = QVBoxLayout()
+        root.setContentsMargins(22, 20, 22, 22)
+        root.setSpacing(14)
+
+        header = QFrame()
+        header.setObjectName("HeaderCard")
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(20, 18, 20, 18)
+        header_row.setSpacing(12)
+        title_box = QVBoxLayout()
+        title_box.setSpacing(3)
+        app_title = QLabel(gAppName)
+        app_title.setObjectName("AppTitle")
+        app_subtitle = QLabel("截图即答 · 手机同步 · 悬浮字幕")
+        app_subtitle.setObjectName("AppSubtitle")
+        title_box.addWidget(app_title)
+        title_box.addWidget(app_subtitle)
+        header_row.addLayout(title_box, 1)
+        chip_box = QVBoxLayout()
+        chip_box.setSpacing(6)
+        self.status_label.setObjectName("Chip")
+        self.provider_label.setObjectName("ChipMuted")
+        chip_box.addWidget(self.status_label, 0, Qt.AlignmentFlag.AlignRight)
+        chip_box.addWidget(self.provider_label, 0, Qt.AlignmentFlag.AlignRight)
+        header_row.addLayout(chip_box)
+        root.addWidget(header)
+
+        actions_card, actions_body = self._make_card(
+            "快捷操作", "点一下就能截屏分析；手势、托盘菜单与手机端同样可用。"
+        )
+        action_row = QHBoxLayout()
+        action_row.setSpacing(10)
+        action_row.addWidget(self.fullscreen_button, 2)
+        action_row.addWidget(self.multi_capture_button, 1)
+        actions_body.addLayout(action_row)
+        actions_body.addLayout(multi_row)
+        actions_body.addWidget(multi_hint)
+        root.addWidget(actions_card)
+
+        phone_card, phone_body = self._make_card(
+            "手机端", "手机与电脑连同一个 WiFi，扫码后答案实时同步；方向键可直接遥控手机答案框。"
+        )
+        phone_body.addLayout(mobile_row)
+        phone_body.addWidget(qr_wrap, 0, Qt.AlignmentFlag.AlignHCenter)
+        phone_body.addWidget(self.remote_arrows_toggle)
+        root.addWidget(phone_card)
+
+        model_card, model_body = self._make_card("模型与密钥", "Key 只保存在本机，填任意一个即可开始。")
+        model_body.addLayout(provider_form)
+        model_body.addLayout(save_row)
+        root.addWidget(model_card)
+
+        capture_card, capture_body = self._make_card("截图与手势")
+        capture_body.addWidget(self.region_gesture_toggle)
+        capture_body.addWidget(self.fullscreen_gesture_toggle)
+        if sys.platform == "win32":
+            capture_body.addWidget(self.ctrl_capture_toggle)
+        capture_body.addLayout(auto_capture_row)
+        capture_body.addLayout(repair_row)
+        capture_body.addLayout(retry_row)
+        root.addWidget(capture_card)
+
+        overlay_card, overlay_body = self._make_card("悬浮字幕", "共享屏幕时字幕不会被录制进去。")
+        overlay_body.addWidget(self.overlay_toggle)
+        overlay_body.addWidget(self.console_capture_toggle)
+        overlay_body.addLayout(opacity_row)
+        overlay_body.addLayout(font_row)
+        root.addWidget(overlay_card)
+
+        appearance_card, appearance_body = self._make_card("外观")
+        appearance_body.addLayout(appearance_row)
+        root.addWidget(appearance_card)
+
+        bank_card, bank_body = self._make_card("题库", "命中题库时直接返回答案，不再调用模型。")
+        bank_body.addLayout(bank_row)
+        bank_body.addLayout(bank_buttons)
+        root.addWidget(bank_card)
+
+        hotkey_card, hotkey_body = self._make_card("快捷键")
+        hotkey_body.addLayout(hotkey_row)
+        hotkey_body.addWidget(hotkey_hint)
+        hotkey_body.addWidget(gesture_hint)
+        root.addWidget(hotkey_card)
+
+        prompt_card, prompt_body = self._make_card("系统 Prompt", "可编辑，不限字数；保存后对后续分析生效。")
+        prompt_body.addWidget(self.prompt_input)
+        prompt_body.addWidget(self.save_prompt_button)
+        root.addWidget(prompt_card)
+
+        log_card, log_body = self._make_card("运行日志")
+        log_body.addWidget(self.logs)
+        log_body.addWidget(self.clear_chat_button)
+        root.addWidget(log_card)
+
+        root.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)
 
         content = QWidget()
-        content.setLayout(layout)
+        content.setObjectName("Root")
+        content.setLayout(root)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -526,6 +647,27 @@ class MainWindow(QMainWindow):
         self.overlay_toggle.setChecked(overlay_visible)
         QTimer.singleShot(250, self._apply_console_capture_setting)
         QTimer.singleShot(600, self._maybe_prompt_macos_permissions)
+
+    def _make_card(self, title: str, subtitle: str = "") -> tuple[QFrame, QVBoxLayout]:
+        """视觉分组卡片：圆角容器 + 标题 + 副标题 + 内容区。"""
+        card = QFrame()
+        card.setObjectName("Card")
+        outer = QVBoxLayout(card)
+        outer.setContentsMargins(18, 16, 18, 16)
+        outer.setSpacing(9)
+        if title:
+            title_label = QLabel(title)
+            title_label.setObjectName("CardTitle")
+            outer.addWidget(title_label)
+        if subtitle:
+            hint = QLabel(subtitle)
+            hint.setObjectName("CardHint")
+            hint.setWordWrap(True)
+            outer.addWidget(hint)
+        body = QVBoxLayout()
+        body.setSpacing(8)
+        outer.addLayout(body)
+        return card, body
 
     def _setup_tray_icon(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -638,8 +780,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(1500, lambda: self.copy_mobile_button.setText("复制网址"))
 
     def _apply_appearance_settings(self) -> None:
-        self.ui_font_family = str(self.font_combo.currentData() or "Times New Roman")
-        self.ui_theme = str(self.theme_combo.currentData() or "light")
+        self.ui_font_family = str(self.font_combo.currentData() or "系统默认")
+        self.ui_theme = str(self.theme_combo.currentData() or "dark")
         self.app_settings.setValue("appearance/font_family", self.ui_font_family)
         self.app_settings.setValue("appearance/theme", self.ui_theme)
         self.app_settings.sync()
@@ -648,10 +790,9 @@ class MainWindow(QMainWindow):
         self.app_settings.setValue("overlay/text_color", text_color)
         self.app_settings.sync()
         self.overlay.set_text_appearance(self.ui_font_family, text_color)
-        if self.ui_theme == "dark":
-            self.setStyleSheet("QMainWindow, QWidget { background: #202124; color: #f1f3f4; } QLineEdit, QTextEdit, QComboBox { background: #303134; color: #f1f3f4; }")
-        else:
-            self.setStyleSheet("QMainWindow, QWidget { background: #ffffff; color: #202124; }")
+        apply_app_theme(QApplication.instance(), self.ui_theme)
+        if self.ui_font_family != "系统默认":
+            self.setFont(QFont(self.ui_font_family, 12))
     def save_provider_settings(self) -> None:
         deepseek_key = self.deepseek_key_input.text().strip()
         openrouter_key = self.openrouter_key_input.text().strip()
@@ -1569,7 +1710,10 @@ class MainWindow(QMainWindow):
                 self.mouse_listener.set_enabled(True)
 
     def set_status(self, message: str) -> None:
-        self.status_label.setText(f"状态：{message}")
+        text = str(message).strip()
+        short = text if len(text) <= 18 else text[:17] + "…"
+        self.status_label.setText(f"状态：{short}")
+        self.status_label.setToolTip(text)
         self._log(message)
 
     def show_result(self, result: dict[str, Any]) -> None:
@@ -1593,6 +1737,7 @@ class MainWindow(QMainWindow):
         )
         self.qr_label.setPixmap(scaled)
         self.qr_label.setFixedSize(scaled.width() + 24, scaled.height() + 24)
+        self.qr_label.setVisible(True)
 
     def _on_desktop_model_tier(self, _index: int) -> None:
         self._apply_model_tier(str(self.model_tier_combo.currentData() or DEFAULT_MODEL_TIER))

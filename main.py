@@ -56,6 +56,12 @@ def _install_crash_logging() -> None:
 def main() -> int:
     _install_crash_logging()
     app = QApplication(sys.argv)
+    from PySide6.QtCore import QSettings
+
+    from ai_screenshot_assistant.ui.theme import apply_app_theme
+
+    saved_theme = QSettings("AI Screenshot Assistant", "Desktop").value("appearance/theme", "dark")
+    apply_app_theme(app, str(saved_theme or "dark"))
     lock_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.TempLocation)
     instance_lock = QLockFile(str(Path(lock_dir) / "com.sayuriqvq.QQMusic.lock"))
     if not instance_lock.tryLock(250):

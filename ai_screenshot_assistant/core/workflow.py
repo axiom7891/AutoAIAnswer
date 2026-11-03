@@ -93,12 +93,12 @@ class AssistantWorkflow:
 
     def start_capture(self) -> None:
         self.roi.start()
-        self.on_status("Left 2s to box a region, or right 2s for fullscreen")
+        self.on_status("左键长按 2 秒框选，右键长按 2 秒全屏")
         self._publish_selection_status("waiting", "左键长按 2 秒框选，或右键长按 2 秒全屏")
 
     def left_up(self, x: int, y: int) -> None:
         self.roi.left_up(x, y)
-        self.on_status(f"P1: ({x}, {y}); move to P2 and left click to submit")
+        self.on_status(f"起点 ({x}, {y})，移到终点后再左键单击")
         self._publish_selection_status("p1_ready", "左键 2 秒已识别，请再左键框选终点")
 
     def second_left_up(self, x: int, y: int) -> None:
@@ -109,10 +109,10 @@ class AssistantWorkflow:
             self.roi.reset()
             return
         if roi is None:
-            self.on_status("Hold left button for 2 seconds at P1 before clicking P2")
+            self.on_status("请先在起点按住左键 2 秒")
             self._publish_selection_status("waiting", "请先在起点按住左键 2 秒")
             return
-        self.on_status("Selection submitted; analyzing...")
+        self.on_status("框选完成，正在分析…")
         self._publish_selection_status("capturing", "框选完成，正在截取题目")
         self.process_roi(roi)
         self.roi.reset()
@@ -151,7 +151,7 @@ class AssistantWorkflow:
     ) -> None:
         generation, cancel_token = analysis or self._begin_analysis("chat" if is_chat or use_conversation else "direct")
         self.roi.reset()
-        self.on_status("Fullscreen captured; analyzing...")
+        self.on_status("全屏已截取，正在分析…")
         self._publish_selection_status("capturing", "已截取当前屏幕全屏，正在发送给 AI")
         request_id = request_id or uuid4().hex
         started_at = time.perf_counter()
@@ -553,7 +553,7 @@ class AssistantWorkflow:
             try:
                 self.publisher.send_sync(event.to_dict())
             except Exception as exc:
-                self.on_status(f"Mobile update failed: {exc}")
+                self.on_status(f"手机端同步失败：{exc}")
 
     def _fail(self, message: str, request_id: str | None = None, generation=None) -> None:
         request_id = request_id or uuid4().hex
