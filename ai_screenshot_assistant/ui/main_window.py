@@ -10,8 +10,11 @@ import time
 from typing import Any
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QIcon, QPixmap, QFont
+from PySide6.QtGui import QAction, QCloseEvent, QCursor, QFont, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QDialog,
+    QTextBrowser,
+    QVBoxLayout,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -38,8 +41,20 @@ from PySide6.QtWidgets import (
 )
 
 from ai_screenshot_assistant.ai.client import FailoverVisionClient, ProviderConfig
-from ai_screenshot_assistant.ai.prompt import VISION_PROMPT
-from ai_screenshot_assistant.ai.models import DEFAULT_MODEL_TIER, MODEL_ROUTES, normalize_model_tier, route_options
+from ai_screenshot_assistant.ai.prompt import (
+    ANSWER_FORMAT_FULL,
+    ANSWER_FORMAT_LABELS,
+    VISION_PROMPT,
+    set_answer_format,
+)
+from ai_screenshot_assistant.ai.models import (
+    DEFAULT_MODEL_TIER,
+    GOOGLE_GEMINI_PRO_MODEL,
+    MODEL_ROUTES,
+    ROUTE_OPENROUTER_CUSTOM,
+    normalize_model_tier,
+    route_options,
+)
 from ai_screenshot_assistant.backend_api import BackendApi, BackendSession
 from ai_screenshot_assistant.bank.question_bank import (
     IMAGE_SUFFIXES,
@@ -47,6 +62,7 @@ from ai_screenshot_assistant.bank.question_bank import (
     default_bank_path,
     import_bank_file,
 )
+from ai_screenshot_assistant.capture.blackout import BlackoutSession
 from ai_screenshot_assistant.capture.repair import RepairPolicy
 from ai_screenshot_assistant.capture.screenshot import ScreenCapture
 from ai_screenshot_assistant.config import settings
@@ -55,6 +71,7 @@ from ai_screenshot_assistant.core.workflow import AssistantWorkflow
 from ai_screenshot_assistant.desktop_command_client import DesktopCommandClient
 from ai_screenshot_assistant.input.mouse_listener import MouseRoiListener
 from ai_screenshot_assistant.input.ctrl_listener import CtrlScreenshotListener
+from ai_screenshot_assistant.input.poll_hotkeys import PollingHotkeys
 from ai_screenshot_assistant.input.remote_keys import RemoteAnswerKeyListener
 from ai_screenshot_assistant.input.mac_hotkeys import MacHotkeyListener
 from ai_screenshot_assistant.resources import app_icon_path
@@ -67,7 +84,13 @@ from ai_screenshot_assistant.ui.auto_capture import (
 )
 from ai_screenshot_assistant.ui.streaming_overlay import StreamingOverlay
 from ai_screenshot_assistant.ui.native_capture import apply_window_capture_exclusion
+from ai_screenshot_assistant.ui.capture_guard import CaptureExclusionGuard
 from ai_screenshot_assistant.ui.theme import apply_app_theme
+from ai_screenshot_assistant.ui.wheel_guard import (
+    WheelSafeComboBox,
+    WheelSafeSlider,
+    WheelSafeSpinBox,
+)
 from ai_screenshot_assistant.utils.qrcode_image import QR_DISPLAY_PX, pair_qr_png_bytes
 from ai_screenshot_assistant.websocket_client import DesktopWebSocketPublisher
 
@@ -95,11 +118,15 @@ class UiSignals(QObject):
     analysis_finished = Signal()
     pending_capture_ready = Signal(object, str)
     multi_capture_requested = Signal()
+    pending_restore = Signal(object)
     analyze_cache_requested = Signal()
     repair_report = Signal(str)
     diagnostics_ready = Signal(str)
+    screen_capture_requested = Signal()
     auto_capture_toggle_requested = Signal()
     overlay_toggle_requested = Signal()
+    blackout_toggle_requested = Signal()
+    blackout_release_requested = Signal()
 
 
 class MainWindow(QMainWindow):
@@ -123,6 +150,8 @@ class MainWindow(QMainWindow):
         self.doubao_key = str(
             self.app_settings.value("providers/doubao_key", settings.doubao_api_key) or ""
         )
+        self.google_key = str(self.app_settings.value("providers/google_key", "") or "")
+        self.custom_model = str(self.app_settings.value("providers/custom_model", "") or "")
         self.model_tier = normalize_model_tier(
             str(self.app_settings.value("providers/model_tier", settings.model_tier) or DEFAULT_MODEL_TIER)
         )
@@ -146,11 +175,21 @@ class MainWindow(QMainWindow):
         self.signals.analysis_finished.connect(self._on_analysis_finished)
         self.signals.pending_capture_ready.connect(self._on_pending_capture_ready)
         self.signals.multi_capture_requested.connect(self._on_multi_capture_shortcut)
+        self.signals.pending_restore.connect(self._on_pending_restore)
         self.signals.analyze_cache_requested.connect(self._on_analyze_cache_shortcut)
         self.signals.repair_report.connect(self._log)
         self.signals.diagnostics_ready.connect(self._on_diagnostics_ready)
+        self.signals.screen_capture_requested.connect(
+            self._capture_current_screen, Qt.ConnectionType.QueuedConnection,
+        )
         self.signals.auto_capture_toggle_requested.connect(self._toggle_auto_capture)
         self.signals.overlay_toggle_requested.connect(self._toggle_overlay_shortcut)
+        self.signals.blackout_toggle_requested.connect(
+            self._toggle_blackout_shortcut, Qt.ConnectionType.QueuedConnection,
+        )
+        self.signals.blackout_release_requested.connect(
+            self._release_blackout_shortcut, Qt.ConnectionType.QueuedConnection,
+        )
 
         self.overlay = StreamingOverlay(self.app_settings)
         self.overlay.status.connect(self.signals.repair_report.emit)
@@ -167,6 +206,10 @@ class MainWindow(QMainWindow):
         self.ctrl_listener: CtrlScreenshotListener | None = None
         self.mac_hotkeys: MacHotkeyListener | None = None
         self.remote_keys: RemoteAnswerKeyListener | None = None
+        self.poll_hotkeys: PollingHotkeys | None = None
+        self.capture_guard: CaptureExclusionGuard | None = None
+        self.blackout = BlackoutSession(inject_remote=settings.capture_repair_inject)
+        self._blackout_watchdog: QTimer | None = None
         self.remote_pan_enabled = False
         self.ctrl_capture_enabled = self._settings_bool("customer_c/ctrl_capture", True)
         self._force_quit = False
@@ -201,6 +244,9 @@ class MainWindow(QMainWindow):
         self.retry_timer.setSingleShot(True)
         self.retry_timer.timeout.connect(self._on_retry_timeout)
         self._pending_lock = threading.Lock()
+        self._multi_capture_busy = False
+        self._last_multi_capture_at = 0.0
+        self._last_analyze_cache_at = 0.0
         self.pending_screenshots: list[bytes] = []
         self.pending_screenshot_labels: list[str] = []
         self.auto_capture_scheduler = AutoCaptureScheduler(
@@ -222,7 +268,12 @@ class MainWindow(QMainWindow):
         self.doubao_key_input = QLineEdit(self.doubao_key)
         self.doubao_key_input.setEchoMode(QLineEdit.Normal)
         self.doubao_key_input.setPlaceholderText("可选，火山方舟 ARK_API_KEY")
-        self.model_tier_combo = QComboBox()
+        self.google_key_input = QLineEdit(self.google_key)
+        self.google_key_input.setEchoMode(QLineEdit.Normal)
+        self.google_key_input.setPlaceholderText("可选，Google AI Studio Key（gemini-3.1-pro 直连）")
+        self.custom_model_input = QLineEdit(self.custom_model)
+        self.custom_model_input.setPlaceholderText("可选，自定义 OpenRouter 模型 ID，例如 google/gemini-3.1-pro")
+        self.model_tier_combo = WheelSafeComboBox()
         for route_id, vendor, model in route_options():
             self.model_tier_combo.addItem(f"{vendor} · {model}", route_id)
         index = self.model_tier_combo.findData(self.model_tier)
@@ -239,17 +290,17 @@ class MainWindow(QMainWindow):
         self.prompt_input.setPlaceholderText("输入系统 Prompt，不限制字数")
         self.save_prompt_button = QPushButton("保存系统 Prompt")
         self.save_prompt_button.clicked.connect(self.save_prompt_settings)
-        self.font_combo = QComboBox()
+        self.font_combo = WheelSafeComboBox()
         for family in ("Times New Roman", "系统默认", "Arial", "Microsoft YaHei"):
             self.font_combo.addItem(family, family)
         self.font_combo.setCurrentIndex(max(0, self.font_combo.findData(self.ui_font_family)))
         self.font_combo.currentIndexChanged.connect(self._apply_appearance_settings)
-        self.theme_combo = QComboBox()
+        self.theme_combo = WheelSafeComboBox()
         self.theme_combo.addItem("黑色", "dark")
         self.theme_combo.addItem("白色", "light")
         self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(self.ui_theme)))
         self.theme_combo.currentIndexChanged.connect(self._apply_appearance_settings)
-        self.text_color_combo = QComboBox()
+        self.text_color_combo = WheelSafeComboBox()
         self.text_color_combo.addItem("白色", "white")
         self.text_color_combo.addItem("黑色", "black")
         self.text_color_combo.addItem("蓝色", "blue")
@@ -261,27 +312,9 @@ class MainWindow(QMainWindow):
         overlay_visible = self._settings_bool("overlay/visible", True)
         self.console_capture_toggle = QCheckBox("共享屏幕时隐藏控制台")
         self.console_capture_toggle.setChecked(
-            self._settings_bool("capture/hide_console", sys.platform in {"darwin", "win32"})
+            self._settings_bool("capture/hide_console", False)
         )
         self.console_capture_toggle.toggled.connect(self.set_console_capture_excluded)
-        self.repair_toggle = QCheckBox("截图异常自动修复（黑屏 / 闪屏 / 透明屏）")
-        self.repair_toggle.setChecked(self.repair_enabled)
-        self.repair_toggle.setToolTip(
-            "截图出现全黑、黑块、整屏透明、两帧闪烁，或「看着正常但窗口内容没截进来」（透明/被隐藏窗口）时，"
-            "自动给覆盖该区域的窗口注入临时修复补丁"
-            "（解除捕获排除、取消 DWM 隐藏、还原图层不透明度、移除 DirectComposition 直出、强制重绘），"
-            "然后重新取帧并挑最稳的一帧；补丁在本次截图结束后自动还原。"
-        )
-        self.repair_toggle.toggled.connect(self.set_capture_repair_enabled)
-        if sys.platform != "win32":
-            # 窗口注入补丁依赖 Windows 的捕获排除 / DWM / DirectComposition，macOS 没有对应接口。
-            self.repair_enabled = False
-            self.repair_toggle.setChecked(False)
-            self.repair_toggle.setEnabled(False)
-            self.repair_toggle.setToolTip(
-                "仅 Windows 支持截图异常修复（需要解除其他程序的窗口保护）。"
-                "macOS 上截图、字幕、题库、模型等功能正常。"
-            )
         self.capture_diagnostics_button = QPushButton("截图诊断")
         self.capture_diagnostics_button.setToolTip(
             "抓取控制台所在屏幕，把覆盖它的窗口、捕获保护状态和 PrintWindow 结果写成一份诊断文件，"
@@ -291,7 +324,7 @@ class MainWindow(QMainWindow):
         opacity_percent = int(self.app_settings.value("overlay/opacity_percent", 50) or 50)
         opacity_percent = max(0, min(100, opacity_percent))
         self.opacity_label = QLabel(f"字幕透明度：{opacity_percent}%")
-        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider = WheelSafeSlider(Qt.Orientation.Horizontal)
         self.opacity_slider.setRange(0, 100)
         self.opacity_slider.setValue(opacity_percent)
         self.opacity_slider.valueChanged.connect(self._on_overlay_opacity)
@@ -299,7 +332,7 @@ class MainWindow(QMainWindow):
         font_px = int(self.app_settings.value("overlay/font_px", 18) or 18)
         font_px = max(8, min(22, font_px))
         self.font_label = QLabel(f"字幕字号：{font_px}px")
-        self.font_slider = QSlider(Qt.Orientation.Horizontal)
+        self.font_slider = WheelSafeSlider(Qt.Orientation.Horizontal)
         self.font_slider.setRange(8, 22)
         self.font_slider.setValue(font_px)
         self.font_slider.valueChanged.connect(self._on_overlay_font)
@@ -315,7 +348,7 @@ class MainWindow(QMainWindow):
         self.multi_capture_button = QPushButton("连续截图")
         self.multi_capture_button.setToolTip("截取当前屏幕并加入多图缓存；滚动页面后再次点击，最多 5 张。")
         self.multi_capture_button.clicked.connect(self._capture_multi_screenshot)
-        self.analyze_pending_button = QPushButton("分析缓存（0）")
+        self.analyze_pending_button = QPushButton("分析连续截图缓存（0）")
         self.analyze_pending_button.setEnabled(False)
         self.analyze_pending_button.clicked.connect(self._analyze_pending_screenshots)
         self.clear_pending_button = QPushButton("清空缓存")
@@ -324,7 +357,7 @@ class MainWindow(QMainWindow):
         self.multi_hotkeys_toggle = QCheckBox("启用多图快捷键")
         self.multi_hotkeys_toggle.setChecked(self.multi_hotkeys_enabled)
         self.multi_hotkeys_toggle.setToolTip(
-            "Ctrl+Shift+鼠标左键：连续截图；Ctrl+Shift+鼠标右键：分析缓存。快捷键在控制台最小化到托盘时仍生效。"
+            "Ctrl+Shift+鼠标左键：连续截图；Ctrl+Shift+鼠标右键：分析连续截图缓存。快捷键在控制台最小化到托盘时仍生效。"
         )
         self.multi_hotkeys_toggle.toggled.connect(self._set_multi_hotkeys_enabled)
         self.remote_arrows_toggle = QCheckBox("方向键 ↑ ↓ ← → 直接遥控手机答案框（不用组合键）")
@@ -337,11 +370,11 @@ class MainWindow(QMainWindow):
         self.retry_toggle = QCheckBox("分析超时自动重试")
         self.retry_toggle.setChecked(self.retry_enabled)
         self.retry_toggle.setToolTip("截图后超过设定秒数仍未返回答案时，自动用同一张截图重新分析。")
-        self.retry_timeout_spin = QSpinBox()
+        self.retry_timeout_spin = WheelSafeSpinBox()
         self.retry_timeout_spin.setRange(15, 300)
         self.retry_timeout_spin.setSuffix(" 秒")
         self.retry_timeout_spin.setValue(self.retry_timeout_seconds)
-        self.retry_attempts_spin = QSpinBox()
+        self.retry_attempts_spin = WheelSafeSpinBox()
         self.retry_attempts_spin.setRange(1, 3)
         self.retry_attempts_spin.setSuffix(" 次")
         self.retry_attempts_spin.setValue(self.retry_max_attempts)
@@ -353,7 +386,7 @@ class MainWindow(QMainWindow):
         self.auto_capture_toggle.setToolTip(
             "开启后按设定间隔自动截取控制台所在屏幕并发送给 AI；上一次截图或分析尚未完成时会跳过本次。"
         )
-        self.auto_capture_interval_spin = QSpinBox()
+        self.auto_capture_interval_spin = WheelSafeSpinBox()
         self.auto_capture_interval_spin.setRange(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
         self.auto_capture_interval_spin.setSuffix(" 秒")
         self.auto_capture_interval_spin.setValue(self.auto_capture_seconds)
@@ -399,7 +432,18 @@ class MainWindow(QMainWindow):
         provider_form.addRow("DeepSeek Key（可选）", self.deepseek_key_input)
         provider_form.addRow("OpenRouter Key（可选）", self.openrouter_key_input)
         provider_form.addRow("豆包 Key（可选）", self.doubao_key_input)
+        provider_form.addRow("Google Key（可选）", self.google_key_input)
+        provider_form.addRow("自定义模型 ID", self.custom_model_input)
         provider_form.addRow("模型", self.model_tier_combo)
+        self.answer_format_combo = WheelSafeComboBox()
+        for value, label in ANSWER_FORMAT_LABELS.items():
+            self.answer_format_combo.addItem(label, value)
+        saved_format = str(self.app_settings.value("answer/format", ANSWER_FORMAT_FULL))
+        format_index = self.answer_format_combo.findData(saved_format)
+        self.answer_format_combo.setCurrentIndex(format_index if format_index >= 0 else 0)
+        set_answer_format(saved_format if format_index >= 0 else ANSWER_FORMAT_FULL)
+        self.answer_format_combo.currentIndexChanged.connect(self._on_answer_format_changed)
+        provider_form.addRow("答案格式", self.answer_format_combo)
 
         save_row = QHBoxLayout()
         save_row.setSpacing(10)
@@ -418,7 +462,6 @@ class MainWindow(QMainWindow):
 
         repair_row = QHBoxLayout()
         repair_row.setSpacing(10)
-        repair_row.addWidget(self.repair_toggle)
         repair_row.addWidget(self.capture_diagnostics_button)
         repair_row.addStretch(1)
 
@@ -437,22 +480,32 @@ class MainWindow(QMainWindow):
         multi_row.addWidget(self.clear_pending_button)
         multi_row.addStretch(1)
 
-        multi_hint = QLabel("资料分析：滚动页面后连续截图（最多 5 张），再点「分析缓存」一起发送。")
+        multi_hint = QLabel("资料分析：滚动页面后连续截图（最多 5 张），再点「分析连续截图缓存」一起发送。快捷键：Ctrl+Shift+左键 / 右键。")
         multi_hint.setObjectName("CardHint")
         multi_hint.setWordWrap(True)
 
         hotkey_row = QHBoxLayout()
         hotkey_row.setSpacing(10)
         hotkey_row.addWidget(self.multi_hotkeys_toggle)
+        self.hotkey_help_button = QPushButton("查看所有热键")
+        self.hotkey_help_button.setProperty("class", "ghost")
+        self.hotkey_help_button.clicked.connect(self._show_hotkey_help)
+        hotkey_row.addWidget(self.hotkey_help_button)
         hotkey_row.addStretch(1)
 
         hotkey_hint = QLabel(
-            "Ctrl+Shift+左键 连续截图 · Ctrl+Shift+右键 分析缓存 · "
-            "Ctrl+Alt+O 显示/隐藏字幕 · 鼠标中键长按 1 秒 开关自动截屏 · "
-            "方向键 ↑↓←→ 滚动手机答案框"
+            "方向键 ↑↓←→：滚动手机答案框（↑↓ 翻页、←→ 代码左右滚）"
         )
         hotkey_hint.setObjectName("CardHint")
         hotkey_hint.setWordWrap(True)
+
+        action_hint = QLabel("左键双击 截整屏 · 左键三连击 或 中键长按 1 秒 开关自动截屏")
+        action_hint.setObjectName("CardHint")
+        action_hint.setWordWrap(True)
+
+        subtitle_hint = QLabel("Alt+Z 显示/隐藏字幕；透明度可调 0–100%")
+        subtitle_hint.setObjectName("CardHint")
+        subtitle_hint.setWordWrap(True)
 
         auto_capture_row = QHBoxLayout()
         auto_capture_row.setSpacing(8)
@@ -517,7 +570,6 @@ class MainWindow(QMainWindow):
         for checkbox in (
             self.overlay_toggle,
             self.console_capture_toggle,
-            self.repair_toggle,
             self.remote_arrows_toggle,
             self.region_gesture_toggle,
             self.fullscreen_gesture_toggle,
@@ -565,6 +617,7 @@ class MainWindow(QMainWindow):
         actions_body.addLayout(action_row)
         actions_body.addLayout(multi_row)
         actions_body.addWidget(multi_hint)
+        actions_body.addWidget(action_hint)
         root.addWidget(actions_card)
 
         phone_card, phone_body = self._make_card(
@@ -588,6 +641,24 @@ class MainWindow(QMainWindow):
         capture_body.addLayout(auto_capture_row)
         capture_body.addLayout(repair_row)
         capture_body.addLayout(retry_row)
+        blackout_row = QHBoxLayout()
+        blackout_row.setSpacing(10)
+        self.blackout_toggle = QPushButton("让目标窗口持续可见（解决黑屏）")
+        self.blackout_toggle.setToolTip("开启后一直保持目标窗口可见；考试中按 Alt+F 切换、Alt+G 立即还原")
+        self.blackout_toggle.setCheckable(True)
+        self.blackout_toggle.setProperty("class", "ghost")
+        self.blackout_toggle.toggled.connect(self._toggle_blackout)
+        self.blackout_probe_button = QPushButton("检测可修复窗口")
+        self.blackout_probe_button.setProperty("class", "ghost")
+        self.blackout_probe_button.clicked.connect(self._probe_blackout)
+        blackout_row.addWidget(self.blackout_toggle)
+        blackout_row.addWidget(self.blackout_probe_button)
+        blackout_row.addStretch(1)
+        capture_body.addLayout(blackout_row)
+        self.blackout_status = QLabel("解决黑屏：只对覆盖截图区域的窗口解除保护，本软件窗口不受影响；开启后一直生效，退出/Alt+G 才恢复。")
+        self.blackout_status.setObjectName("CardHint")
+        self.blackout_status.setWordWrap(True)
+        capture_body.addWidget(self.blackout_status)
         root.addWidget(capture_card)
 
         overlay_card, overlay_body = self._make_card("悬浮字幕", "共享屏幕时字幕不会被录制进去。")
@@ -595,6 +666,7 @@ class MainWindow(QMainWindow):
         overlay_body.addWidget(self.console_capture_toggle)
         overlay_body.addLayout(opacity_row)
         overlay_body.addLayout(font_row)
+        overlay_body.addWidget(subtitle_hint)
         root.addWidget(overlay_card)
 
         appearance_card, appearance_body = self._make_card("外观")
@@ -640,6 +712,7 @@ class MainWindow(QMainWindow):
         self._setup_tray_icon()
         self._setup_workflow()
         self._setup_platform_hotkeys()
+        self._setup_capture_guard()
         self._apply_auto_capture_setting()
         self._refresh_bank_status()
         self._update_pending_buttons()
@@ -755,12 +828,22 @@ class MainWindow(QMainWindow):
             timeout_seconds=settings.request_timeout_seconds,
             system_prompt=self.system_prompt,
         )
+        google = ProviderConfig(
+            name="Google",
+            api_key=self.google_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            model=GOOGLE_GEMINI_PRO_MODEL,
+            timeout_seconds=settings.request_timeout_seconds,
+            system_prompt=self.system_prompt,
+        )
         return FailoverVisionClient(
             deepseek,
             openrouter,
             on_provider_changed=lambda name: self.signals.provider_changed.emit(name),
             model_tier=self.model_tier,
             doubao=doubao,
+            google=google,
+            custom_model=self.custom_model,
         )
 
     def save_prompt_settings(self) -> None:
@@ -797,8 +880,10 @@ class MainWindow(QMainWindow):
         deepseek_key = self.deepseek_key_input.text().strip()
         openrouter_key = self.openrouter_key_input.text().strip()
         doubao_key = self.doubao_key_input.text().strip()
-        if not deepseek_key and not openrouter_key and not doubao_key:
-            self.save_status.setText("请至少填写 DeepSeek、OpenRouter 或豆包其中一把 Key")
+        self.google_key = self.google_key_input.text().strip()
+        self.custom_model = self.custom_model_input.text().strip()
+        if not deepseek_key and not openrouter_key and not doubao_key and not self.google_key:
+            self.save_status.setText("请至少填写 DeepSeek、OpenRouter、豆包或 Google 其中一把 Key")
             self.save_status.setStyleSheet("color: #d33;")
             return
         self.deepseek_key = deepseek_key
@@ -809,6 +894,8 @@ class MainWindow(QMainWindow):
         self.app_settings.setValue("providers/deepseek_key", deepseek_key)
         self.app_settings.setValue("providers/openrouter_key", openrouter_key)
         self.app_settings.setValue("providers/doubao_key", doubao_key)
+        self.app_settings.setValue("providers/google_key", self.google_key)
+        self.app_settings.setValue("providers/custom_model", self.custom_model)
         self.app_settings.setValue("providers/model_tier", self.model_tier)
         self.app_settings.sync()
         client = self._build_ai_client()
@@ -830,9 +917,13 @@ class MainWindow(QMainWindow):
             "doubao": bool(self.doubao_key.strip()),
             "openrouter": bool(self.openrouter_key.strip()),
             "deepseek": bool(self.deepseek_key.strip()),
+            "google": bool(getattr(self, "google_key", "").strip()),
         }
         for index, (route_id, vendor, model_name) in enumerate(route_options()):
             available = has_provider.get(MODEL_ROUTES[route_id].provider, False)
+            if route_id == ROUTE_OPENROUTER_CUSTOM:
+                available = available and bool(str(getattr(self, "custom_model", "")).strip())
+                model_name = str(getattr(self, "custom_model", "") or model_name)
             suffix = "" if available else "（你还没有连接模型喔）"
             self.model_tier_combo.setItemText(index, f"{vendor} · {model_name}{suffix}")
             item = self.model_tier_combo.model().item(index)
@@ -939,7 +1030,7 @@ class MainWindow(QMainWindow):
         self.auto_capture_toggle.setChecked(not self.auto_capture_toggle.isChecked())
 
     def _toggle_overlay_shortcut(self) -> None:
-        """Ctrl+Alt+O：显示/隐藏桌面悬浮字幕（与勾选框保持一致）。"""
+        """Alt+Z：显示/隐藏桌面悬浮字幕（与勾选框保持一致）。"""
 
         self.overlay_toggle.setChecked(not self.overlay_toggle.isChecked())
         self._log(f"悬浮字幕：{'显示' if self.overlay_toggle.isChecked() else '隐藏'}（快捷键）")
@@ -1091,21 +1182,47 @@ class MainWindow(QMainWindow):
         self._log(f"多图快捷键：{'开启' if enabled else '关闭'}")
 
     def _on_multi_capture_shortcut(self) -> None:
-        if self.multi_hotkeys_enabled:
-            self._capture_multi_screenshot()
+        if not self.multi_hotkeys_enabled:
+            return
+        now = time.monotonic()
+        if now - self._last_multi_capture_at < 0.4:
+            return  # 钩子与轮询可能同时触发，去重
+        self._last_multi_capture_at = now
+        self._capture_multi_screenshot()
 
     def _on_analyze_cache_shortcut(self) -> None:
-        if self.multi_hotkeys_enabled:
-            self._analyze_pending_screenshots()
+        if not self.multi_hotkeys_enabled:
+            return
+        now = time.monotonic()
+        if now - self._last_analyze_cache_at < 0.6:
+            return
+        self._last_analyze_cache_at = now
+        self._analyze_pending_screenshots()
+
+    def _multi_capture_point(self) -> tuple[int, int]:
+        try:
+            screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+            if screen is not None:
+                center = screen.geometry().center()
+                return center.x(), center.y()
+        except Exception:
+            pass
+        center = self.frameGeometry().center()
+        return center.x(), center.y()
 
     def _capture_multi_screenshot(self) -> None:
-        if self.workflow is None or self.mouse_listener is None:
+        if self.workflow is None:
             return
-        center = self.frameGeometry().center()
-        self.mouse_listener.set_enabled(False)
+        with self._pending_lock:
+            if self._multi_capture_busy:
+                return  # 上一次还没截完，忽略这次，避免重复图和并发截图
+            self._multi_capture_busy = True
+        x, y = self._multi_capture_point()
+        if self.mouse_listener is not None:
+            self.mouse_listener.set_enabled(False)
         threading.Thread(
             target=self._run_pending_capture,
-            args=(center.x(), center.y()),
+            args=(x, y),
             daemon=True,
         ).start()
 
@@ -1121,45 +1238,73 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.signals.error.emit(f"连续截图失败：{exc}")
         finally:
+            with self._pending_lock:
+                self._multi_capture_busy = False
             if self.mouse_listener is not None:
                 self.mouse_listener.set_enabled(True)
 
     def _on_pending_capture_ready(self, png: bytes, label: str) -> None:
+        dropped = 0
         with self._pending_lock:
             self.pending_screenshots.append(png)
             self.pending_screenshot_labels.append(label)
             while len(self.pending_screenshots) > 5:
                 self.pending_screenshots.pop(0)
                 self.pending_screenshot_labels.pop(0)
+                dropped += 1
             count = len(self.pending_screenshots)
         self._update_pending_buttons()
-        self._log(f"连续截图：已缓存 {count} 张，继续滚动后截图，或点“分析缓存”")
+        if dropped:
+            self._log(f"连续截图：缓存已满 5 张，最早的一张被替换（当前 {count} 张）")
+        else:
+            self._log(f"连续截图：已缓存 {count} 张，继续滚动后截图，或点“分析连续截图缓存”")
+
+    def _on_pending_restore(self, payload: object) -> None:
+        try:
+            pngs, labels = payload  # type: ignore[misc]
+        except Exception:
+            return
+        with self._pending_lock:
+            for png, label in zip(pngs, labels):
+                self.pending_screenshots.append(png)
+                self.pending_screenshot_labels.append(label)
+            while len(self.pending_screenshots) > 5:
+                self.pending_screenshots.pop(0)
+                self.pending_screenshot_labels.pop(0)
+            count = len(self.pending_screenshots)
+        self._update_pending_buttons()
+        self._log(f"分析失败，已把 {len(pngs)} 张图放回缓存（当前 {count} 张），可直接重试")
 
     def _update_pending_buttons(self) -> None:
         with self._pending_lock:
             count = len(self.pending_screenshots)
-        self.analyze_pending_button.setText(f"分析缓存（{count}）")
+        self.analyze_pending_button.setText(f"分析连续截图缓存（{count}）")
         self.analyze_pending_button.setEnabled(count > 0)
         self.clear_pending_button.setEnabled(count > 0)
 
     def _analyze_pending_screenshots(self) -> None:
         with self._pending_lock:
             pngs = list(self.pending_screenshots)
+            labels = list(self.pending_screenshot_labels)
             self.pending_screenshots.clear()
             self.pending_screenshot_labels.clear()
         self._update_pending_buttons()
-        if not pngs or self.workflow is None or self.mouse_listener is None:
+        if not pngs or self.workflow is None:
+            if not pngs:
+                self._log("连续截图缓存是空的，先按 Ctrl+Shift+左键 截图")
             return
         self._reset_analysis_retry()
-        self.mouse_listener.set_enabled(False)
+        if self.mouse_listener is not None:
+            self.mouse_listener.set_enabled(False)
         analysis = self.workflow._begin_analysis("direct")
         threading.Thread(
             target=self._run_pending_analysis,
-            args=(pngs, analysis),
+            args=(pngs, labels, analysis),
             daemon=True,
         ).start()
 
-    def _run_pending_analysis(self, pngs: list[bytes], analysis) -> None:
+    def _run_pending_analysis(self, pngs: list[bytes], labels: list[str], analysis) -> None:
+        failed = False
         try:
             if self.workflow is not None:
                 self.workflow.process_mobile_images(
@@ -1168,9 +1313,14 @@ class MainWindow(QMainWindow):
                     use_conversation=False,
                     analysis=analysis,
                 )
+        except Exception as exc:
+            failed = True
+            self.signals.error.emit(f"分析连续截图缓存失败：{exc}")
         finally:
             if self.mouse_listener is not None:
                 self.mouse_listener.set_enabled(True)
+        if failed:
+            self.signals.pending_restore.emit((pngs, labels))
 
     def _clear_pending_screenshots(self) -> None:
         with self._pending_lock:
@@ -1279,7 +1429,7 @@ class MainWindow(QMainWindow):
             session_id=session_id,
             capture=ScreenCapture(
                 policy=RepairPolicy(
-                    enabled=self.repair_enabled and sys.platform == "win32",
+                    enabled=sys.platform == "win32",
                     max_attempts=settings.capture_repair_attempts,
                     sample_frames=settings.capture_repair_samples,
                     inject_remote=settings.capture_repair_inject,
@@ -1310,9 +1460,9 @@ class MainWindow(QMainWindow):
             self.signals.mouse_long_left.emit,
             self.signals.mouse_short_left.emit,
             self.signals.mouse_long_right.emit,
-            self.signals.multi_capture_requested.emit,
-            self.signals.analyze_cache_requested.emit,
-            on_middle_long=self.signals.auto_capture_toggle_requested.emit,
+            None if sys.platform == "win32" else self.signals.multi_capture_requested.emit,
+            None if sys.platform == "win32" else self.signals.analyze_cache_requested.emit,
+            on_middle_long=None if sys.platform == "win32" else self.signals.auto_capture_toggle_requested.emit,
         )
         self.mouse_listener.set_shortcuts_enabled(self.multi_hotkeys_enabled)
         try:
@@ -1325,8 +1475,190 @@ class MainWindow(QMainWindow):
         if sys.platform == "darwin":
             self._setup_mac_hotkeys()
         else:
-            self._setup_ctrl_listener()
+            self._setup_poll_hotkeys()
         self._setup_remote_answer_keys()
+
+    def _setup_poll_hotkeys(self) -> None:
+        """Windows：轮询按键状态，不装钩子，考试客户端提权后也不会失效。"""
+        self.poll_hotkeys = PollingHotkeys(
+            on_double_click=self._on_poll_double_click,
+            on_triple_click=self.signals.auto_capture_toggle_requested.emit,
+            on_middle_long=self.signals.auto_capture_toggle_requested.emit,
+            on_alt_z=self.signals.overlay_toggle_requested.emit,
+            on_ctrl_tap=self._on_poll_ctrl_tap,
+            on_ctrl_shift_left=self._on_poll_multi_capture,
+            on_ctrl_shift_right=self._on_poll_analyze_cache,
+            on_fix_toggle=self.signals.blackout_toggle_requested.emit,
+            on_fix_release=self.signals.blackout_release_requested.emit,
+        )
+        try:
+            self.poll_hotkeys.start()
+            self._log(
+                "快捷键（轮询模式）：左键双击 截整屏 · 左键三连击/中键长按 开关自动截屏 · "
+                "Alt+Z 字幕 · Alt+F 解决黑屏 · Alt+G 还原 · "
+                "Ctrl 单击 截整屏 · Ctrl+Shift+左/右键 连续截图/分析连续截图缓存"
+            )
+        except Exception as exc:
+            self._log(f"快捷键轮询启动失败：{exc}")
+
+    def _on_poll_double_click(self) -> None:
+        self.signals.screen_capture_requested.emit()
+
+    def _on_poll_ctrl_tap(self) -> None:
+        if self.ctrl_capture_enabled:
+            self.signals.ctrl_fullscreen_requested.emit()
+
+    def _on_poll_multi_capture(self) -> None:
+        if self.multi_hotkeys_enabled:
+            self.signals.multi_capture_requested.emit()
+
+    def _on_poll_analyze_cache(self) -> None:
+        if self.multi_hotkeys_enabled:
+            self.signals.analyze_cache_requested.emit()
+
+    def _setup_capture_guard(self) -> None:
+        """巡检自己的控制台/字幕窗口，被别的工具清掉捕获排除时立刻补回。"""
+        self.capture_guard = CaptureExclusionGuard(self._capture_guard_targets)
+        self.capture_guard.status.connect(self._log)
+        self.capture_guard.hijacked.connect(self._log)
+        self.capture_guard.start()
+
+    def _capture_guard_targets(self) -> list[tuple[str, int]]:
+        targets: list[tuple[str, int]] = []
+        try:
+            targets.append(("控制台", int(self.winId())))
+        except Exception:
+            pass
+        try:
+            targets.append(("悬浮字幕", int(self.overlay.winId())))
+        except Exception:
+            pass
+        return targets
+
+    def _primary_region(self) -> dict[str, int]:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return {"left": 0, "top": 0, "width": 1920, "height": 1080}
+        geometry = screen.geometry()
+        ratio = screen.devicePixelRatio() or 1.0
+        return {
+            "left": int(geometry.left() * ratio),
+            "top": int(geometry.top() * ratio),
+            "width": int(geometry.width() * ratio),
+            "height": int(geometry.height() * ratio),
+        }
+
+    def _probe_blackout(self) -> None:
+        region = self._primary_region()
+        lines = self.blackout.describe(region)
+        self._log("可修复窗口：")
+        for line in lines[:8]:
+            self._log(f"  {line}")
+        if self.blackout_status is not None:
+            self.blackout_status.setText(f"检测到 {len(lines)} 个候选窗口")
+
+    def _toggle_blackout(self, enabled: bool) -> None:
+        region = self._primary_region()
+        if enabled:
+            ok, lines = self.blackout.engage(region)
+            for line in lines[:8]:
+                self._log(f"解决黑屏：{line}")
+            if not ok:
+                self.blackout_toggle.blockSignals(True)
+                self.blackout_toggle.setChecked(False)
+                self.blackout_toggle.blockSignals(False)
+                self._update_blackout_label(False)
+                if self.blackout_status is not None:
+                    self.blackout_status.setText("没有可以解除保护的窗口（或目标受保护，改用手机端看答案）")
+                return
+            if self.capture_guard is not None:
+                self.capture_guard.reassert_now()
+            self._blackout_started_at = time.monotonic()
+            self._update_blackout_label(True)
+            self._log("解决黑屏：已开启（持续生效；Alt+F 切换、Alt+G 还原）")
+        else:
+            for line in self.blackout.release()[:8]:
+                self._log(f"解决黑屏还原：{line}")
+            if self.capture_guard is not None:
+                self.capture_guard.reassert_now()
+            self._update_blackout_label(False)
+            if self.blackout_status is not None:
+                self.blackout_status.setText("已还原目标窗口的保护状态")
+            self._log("解决黑屏：已关闭并还原")
+
+    def _update_blackout_label(self, active: bool) -> None:
+        button = getattr(self, "blackout_toggle", None)
+        if button is None:
+            return
+        button.setText("已开启：目标窗口可见（点击还原）" if active else "让目标窗口持续可见（解决黑屏）")
+        button.setProperty("class", "primary" if active else "ghost")
+        button.style().unpolish(button)
+        button.style().polish(button)
+        if self.blackout_status is not None and active:
+            targets = "、".join(self.blackout.targets[:2]) or "目标窗口"
+            self.blackout_status.setText(f"已开启 · {targets} · 一直保持可见；Alt+F 关闭、Alt+G 还原")
+
+    def _show_hotkey_help(self) -> None:
+        """弹窗列出所有操作方式与热键。"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("热键与操作说明")
+        dialog.resize(620, 560)
+        layout = QVBoxLayout(dialog)
+        browser = QTextBrowser(dialog)
+        browser.setOpenExternalLinks(False)
+        browser.setHtml(
+            """
+            <style>
+              h3 { margin: 12px 0 6px; }
+              td { padding: 3px 10px 3px 0; vertical-align: top; }
+              .k { font-weight: 600; white-space: nowrap; }
+            </style>
+            <h3>截图搜题</h3>
+            <table>
+              <tr><td class="k">鼠标左键长按 2 秒</td><td>框选题目区域，然后截图搜题</td></tr>
+              <tr><td class="k">鼠标右键长按 2 秒</td><td>截取当前整屏</td></tr>
+              <tr><td class="k">鼠标左键双击</td><td>截取当前整屏（最省事）</td></tr>
+              <tr><td class="k">左键三连击 / 中键长按 1 秒</td><td>开关「自动截全屏」</td></tr>
+              <tr><td class="k">Ctrl 单击</td><td>截取当前整屏（需在设置里勾选）</td></tr>
+              <tr><td class="k">Ctrl+Shift+左键</td><td>连续截图（需勾「启用多图快捷键」）</td></tr>
+              <tr><td class="k">Ctrl+Shift+右键</td><td>分析连续截图缓存</td></tr>
+            </table>
+            <h3>字幕与黑屏</h3>
+            <table>
+              <tr><td class="k">Alt+Z</td><td>显示 / 隐藏悬浮字幕</td></tr>
+              <tr><td class="k">Alt+F</td><td>开启 / 关闭「解决黑屏」</td></tr>
+              <tr><td class="k">Alt+G</td><td>立即还原（关闭解决黑屏）</td></tr>
+            </table>
+            <h3>手机端</h3>
+            <table>
+              <tr><td class="k">方向键 ↑ ↓ ← →</td><td>滚动手机答案框（↑↓ 翻页、←→ 代码左右滚）</td></tr>
+            </table>
+            <h3>说明</h3>
+            <table>
+              <tr><td>截图异常自动修复（黑屏 / 闪屏 / 透明屏）默认开启，每次截图前自动处理，无需手动开关。</td></tr>
+              <tr><td>所有热键在控制台最小化到托盘、考试全屏时仍然生效。</td></tr>
+              <tr><td>如果某个键被其他软件占用，程序日志会显示「快捷键冲突」，换用其他操作即可。</td></tr>
+            </table>
+            """
+        )
+        layout.addWidget(browser)
+        close_button = QPushButton("知道了")
+        close_button.setProperty("class", "primary")
+        close_button.clicked.connect(dialog.accept)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(close_button)
+        layout.addLayout(row)
+        dialog.exec()
+
+    def _toggle_blackout_shortcut(self) -> None:
+        self.blackout_toggle.setChecked(not self.blackout_toggle.isChecked())
+
+    def _release_blackout_shortcut(self) -> None:
+        if self.blackout_toggle.isChecked():
+            self.blackout_toggle.setChecked(False)
+        else:
+            self._toggle_blackout(False)
 
     def _setup_remote_answer_keys(self) -> None:
         self.remote_keys = RemoteAnswerKeyListener(
@@ -1392,7 +1724,7 @@ class MainWindow(QMainWindow):
         )
         try:
             self.mac_hotkeys.start()
-            self._log("macOS 快捷键已启用：Ctrl+Alt+O 字幕开关，鼠标中键长按 1 秒 自动截屏")
+            self._log("macOS 快捷键已启用：Alt+Z 字幕开关，鼠标中键长按 1 秒 / 左键双击 截屏")
         except Exception as exc:
             self._log(f"macOS 快捷键监听启动失败（需在辅助功能里允许本程序）：{exc}")
 
@@ -1739,6 +2071,15 @@ class MainWindow(QMainWindow):
         self.qr_label.setFixedSize(scaled.width() + 24, scaled.height() + 24)
         self.qr_label.setVisible(True)
 
+    def _on_answer_format_changed(self, _index: int) -> None:
+        value = self.answer_format_combo.currentData()
+        if not value:
+            return
+        set_answer_format(str(value))
+        self.app_settings.setValue("answer/format", str(value))
+        self.app_settings.sync()
+        self._log(f"答案格式：{self.answer_format_combo.currentText()}")
+
     def _on_desktop_model_tier(self, _index: int) -> None:
         self._apply_model_tier(str(self.model_tier_combo.currentData() or DEFAULT_MODEL_TIER))
 
@@ -1838,6 +2179,13 @@ class MainWindow(QMainWindow):
             self.mac_hotkeys.stop()
         if self.remote_keys is not None:
             self.remote_keys.stop()
+        if self.poll_hotkeys is not None:
+            self.poll_hotkeys.stop()
+        if self.capture_guard is not None:
+            self.capture_guard.stop()
+        if self.blackout.active:
+            for line in self.blackout.release():
+                self._log(f"解决黑屏还原：{line}")
         if self.publisher is not None:
             self.publisher.close()
         if self.command_client is not None:

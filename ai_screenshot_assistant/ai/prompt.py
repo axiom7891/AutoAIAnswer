@@ -33,3 +33,43 @@ VISION_PROMPT = """你是截图搜题助手。识别图片中的全部题目并�
 【第2题】<题干摘要，不超过20字>
 答案：<该题最终答案>
 解析：<极简解析>"""
+
+# ---- 答案输出格式 ----
+ANSWER_FORMAT_FULL = "full"
+ANSWER_FORMAT_ANSWER_ONLY = "answer_only"
+ANSWER_FORMAT_LETTER_ONLY = "letter_only"
+ANSWER_FORMAT_INDEX_ONLY = "index_only"
+
+ANSWER_FORMAT_LABELS = {
+    ANSWER_FORMAT_FULL: "答案 + 解析（默认）",
+    ANSWER_FORMAT_ANSWER_ONLY: "只要答案（不写解析）",
+    ANSWER_FORMAT_LETTER_ONLY: "只要选项字母（如 B）",
+    ANSWER_FORMAT_INDEX_ONLY: "只要第几个（如 第 2 个）",
+}
+
+ANSWER_FORMAT_INSTRUCTIONS = {
+    ANSWER_FORMAT_FULL: "",
+    ANSWER_FORMAT_ANSWER_ONLY: (
+        "\n\n【本次输出格式】只输出一行「答案：<最终答案>」，"
+        "不要写解析、推理过程、置信度，也不要写代码说明。"
+    ),
+    ANSWER_FORMAT_LETTER_ONLY: (
+        "\n\n【本次输出格式】题目带 A/B/C/D 选项时，只输出选项字母（多选写成「A、C」）；"
+        "没有选项字母时只输出正确选项的原文。不要任何解析。"
+    ),
+    ANSWER_FORMAT_INDEX_ONLY: (
+        "\n\n【本次输出格式】只输出「第 N 个」（多选写成「第 N、M 个」）；"
+        "不要写选项内容，不要解析。"
+    ),
+}
+
+_ACTIVE_ANSWER_FORMAT = ANSWER_FORMAT_FULL
+
+
+def set_answer_format(fmt: str) -> None:
+    global _ACTIVE_ANSWER_FORMAT
+    _ACTIVE_ANSWER_FORMAT = fmt if fmt in ANSWER_FORMAT_INSTRUCTIONS else ANSWER_FORMAT_FULL
+
+
+def answer_format_suffix() -> str:
+    return ANSWER_FORMAT_INSTRUCTIONS.get(_ACTIVE_ANSWER_FORMAT, "")

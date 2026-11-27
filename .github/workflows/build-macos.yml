@@ -14,6 +14,10 @@ on:
         description: "同时构建 Intel (x86_64) 版本"
         type: boolean
         default: false
+      intel_runner:
+        description: "Intel 构建机（默认 macos-15-intel；如不可用可改 macos-13）"
+        type: string
+        default: macos-15-intel
 
 concurrency:
   group: macos-build-${{ github.ref }}
@@ -74,13 +78,16 @@ jobs:
           PACKAGE_USE_VENV: "0"
           PACKAGE_INSTALL_DEPS: "0"
           PACKAGE_RUN_TESTS: "0"
-          PACKAGE_ZIP_NAME: QQMusic-macOS-arm64.zip
-        run: bash packaging/macos/package.sh
+        run: |
+          VERSION=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building v$VERSION for arm64"
+          PACKAGE_ZIP_NAME="QQMusic-macOS-arm64-v$VERSION.zip" bash packaging/macos/package.sh
 
       - name: Checksums
         run: |
           cd dist
-          shasum -a 256 "QQMusic-macOS-arm64.zip" > "SHA256SUMS-arm64.txt"
+          shasum -a 256 "QQMusic-macOS-arm64-v${{ env.APP_VERSION }}.zip" > "SHA256SUMS-arm64.txt"
           cat "SHA256SUMS-arm64.txt"
 
       - name: Upload artifacts
@@ -88,15 +95,15 @@ jobs:
         with:
           name: QQMusic-macOS-arm64
           path: |
-            dist/QQMusic-macOS-arm64.zip
+            dist/QQMusic-macOS-arm64-v*.zip
             dist/SHA256SUMS-arm64.txt
           if-no-files-found: error
           retention-days: 14
 
   build-intel:
-    name: Build (Intel, optional)
-    if: github.event_name == 'workflow_dispatch' && inputs.intel
-    runs-on: macos-13
+    name: Build (Intel x86_64)
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.intel) || startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ${{ inputs.intel_runner || 'macos-15-intel' }}
     timeout-minutes: 45
     continue-on-error: true
     steps:
@@ -137,18 +144,27 @@ jobs:
             echo "::error title=pytest::${line}"
           done
 
+      - name: Check architecture
+        run: |
+          uname -m
+          python -c "import platform;print(platform.machine())"
+          test "$(uname -m)" = "x86_64"
+
       - name: Build QQMusic.app
         env:
           PACKAGE_USE_VENV: "0"
           PACKAGE_INSTALL_DEPS: "0"
           PACKAGE_RUN_TESTS: "0"
-          PACKAGE_ZIP_NAME: QQMusic-macOS-x86_64.zip
-        run: bash packaging/macos/package.sh
+        run: |
+          VERSION=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building v$VERSION for x86_64"
+          PACKAGE_ZIP_NAME="QQMusic-macOS-x86_64-v$VERSION.zip" bash packaging/macos/package.sh
 
       - name: Checksums
         run: |
           cd dist
-          shasum -a 256 "QQMusic-macOS-x86_64.zip" > "SHA256SUMS-x86_64.txt"
+          shasum -a 256 "QQMusic-macOS-x86_64-v${{ env.APP_VERSION }}.zip" > "SHA256SUMS-x86_64.txt"
           cat "SHA256SUMS-x86_64.txt"
 
       - name: Upload artifacts
@@ -156,7 +172,7 @@ jobs:
         with:
           name: QQMusic-macOS-x86_64
           path: |
-            dist/QQMusic-macOS-x86_64.zip
+            dist/QQMusic-macOS-x86_64-v*.zip
             dist/SHA256SUMS-x86_64.txt
           if-no-files-found: error
           retention-days: 14

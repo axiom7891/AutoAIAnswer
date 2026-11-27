@@ -23,6 +23,9 @@ ROUTE_OPENROUTER_DEEPSEEK_V41 = "openrouter-deepseek-v41"
 ROUTE_OPENROUTER_CLAUDE_OPUS_55 = "openrouter-claude-opus-55"
 ROUTE_OPENROUTER_GPT_6_LUNA = "openrouter-gpt-6-luna"
 ROUTE_DEEPSEEK_FLASH = "deepseek-flash"
+ROUTE_OPENROUTER_GEMINI_31_PRO = "openrouter-gemini-31-pro"
+ROUTE_GOOGLE_GEMINI_PRO = "google-gemini-pro"
+ROUTE_OPENROUTER_CUSTOM = "openrouter-custom"
 DEFAULT_MODEL_TIER = ROUTE_OPENROUTER_QWEN_235B
 
 DEEPSEEK_VISION_MODEL = "deepseek-flash"
@@ -38,6 +41,8 @@ OPENROUTER_QWEN_FLASH = "qwen/qwen3.8-flash"
 OPENROUTER_QWEN_PLUS = "qwen/qwen3.6-plus"
 OPENROUTER_GLM = "z-ai/glm-4.6v"
 OPENROUTER_MINIMAX = "minimax/minimax-m3"
+OPENROUTER_GEMINI_31_PRO = "google/gemini-3.1-pro"
+GOOGLE_GEMINI_PRO_MODEL = "gemini-3.1-pro"
 OPENROUTER_GPT_4O = "openai/gpt-4o"
 OPENROUTER_GPT_4_1 = "openai/gpt-4.1"
 OPENROUTER_DEEPSEEK_V41 = "deepseek/deepseek-v4.1-flash-1017"
@@ -52,6 +57,7 @@ OPENROUTER_TIER_MODELS = {
 
 PROVIDER_LABELS = {
     "doubao": "豆包",
+    "google": "Google",
     "openrouter": "OpenRouter",
     "deepseek": "DeepSeek",
 }
@@ -122,12 +128,38 @@ MODEL_ROUTES: dict[str, ModelRoute] = {
         OPENROUTER_GPT_6_LUNA,
         allow_foreign=True,
     ),
+    ROUTE_OPENROUTER_GEMINI_31_PRO: ModelRoute(
+        ROUTE_OPENROUTER_GEMINI_31_PRO,
+        "OpenRouter Gemini 3.1 Pro",
+        "openrouter",
+        OPENROUTER_GEMINI_31_PRO,
+        allow_foreign=True,
+    ),
+    ROUTE_GOOGLE_GEMINI_PRO: ModelRoute(
+        ROUTE_GOOGLE_GEMINI_PRO,
+        "Google Gemini 3.1 Pro",
+        "google",
+        GOOGLE_GEMINI_PRO_MODEL,
+        trait="",
+        allow_foreign=True,
+    ),
+    ROUTE_OPENROUTER_CUSTOM: ModelRoute(
+        ROUTE_OPENROUTER_CUSTOM,
+        "OpenRouter 自定义模型",
+        "openrouter",
+        "",
+        trait="",
+        allow_foreign=True,
+    ),
     ROUTE_DEEPSEEK_FLASH: ModelRoute(
         ROUTE_DEEPSEEK_FLASH, "DeepSeek 官方", "deepseek", DEEPSEEK_VISION_MODEL
     ),
 }
 
 ROUTE_ALIASES = {
+    "openrouter-gemini-31-pro": ROUTE_OPENROUTER_GEMINI_31_PRO,
+    "google/gemini-3.1-pro": ROUTE_OPENROUTER_GEMINI_31_PRO,
+    "gemini-3.1-pro": ROUTE_OPENROUTER_GEMINI_31_PRO,
     "openrouter-qwen-32b": ROUTE_OPENROUTER_QWEN_27B,
     "openrouter-qwen-8b": ROUTE_OPENROUTER_QWEN_FLASH,
     "openrouter-deepseek-flash": ROUTE_OPENROUTER_QWEN_PLUS,
@@ -318,6 +350,8 @@ def resolve_model_choice(
     has_deepseek: bool,
     has_openrouter: bool,
     has_doubao: bool = False,
+    has_google: bool = False,
+    custom_model: str = "",
 ) -> ModelChoice:
     route_id = normalize_model_tier(tier)
     route = MODEL_ROUTES[route_id]
@@ -325,7 +359,19 @@ def resolve_model_choice(
         "doubao": has_doubao,
         "openrouter": has_openrouter,
         "deepseek": has_deepseek,
+        "google": has_google,
     }
+    if route_id == ROUTE_OPENROUTER_CUSTOM:
+        slug = (custom_model or "").strip()
+        if slug and has_openrouter:
+            return ModelChoice(
+                route_id, format_route_label(route), "openrouter", slug,
+                DEEPSEEK_VISION_MODEL, slug, f"OpenRouter / {slug}", route_id, DOUBAO_VISION_MODEL,
+            )
+        return ModelChoice(
+            route_id, format_route_label(route), "none", "",
+            DEEPSEEK_VISION_MODEL, slug, "OpenRouter 自定义 / 未填写模型 ID", route_id, DOUBAO_VISION_MODEL,
+        )
     openrouter_model = OPENROUTER_QWEN_235B
     if has_provider.get(route.provider):
         provider = route.provider

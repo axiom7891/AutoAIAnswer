@@ -20,6 +20,14 @@ if [[ -z "$SELECTED_SIGN" ]]; then
   SELECTED_SIGN="-"
 fi
 ARCH="$(uname -m)"
+APP_VERSION="$("$PY" - <<'PYEOF'
+import pathlib, re
+text = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+print(match.group(1) if match else "0.0.0")
+PYEOF
+)"
+echo "== 版本：${APP_VERSION} =="
 
 if ! "$PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
   echo "需要 Python 3.11 或更高版本，可用 PYTHON_BIN 指定解释器" >&2
@@ -66,6 +74,11 @@ python -m PyInstaller \
   --hidden-import ai_screenshot_assistant.ui.native_capture \
   --hidden-import ai_screenshot_assistant.ui.macos_capture \
   --hidden-import ai_screenshot_assistant.input.mac_hotkeys \
+  --hidden-import ai_screenshot_assistant.input.poll_hotkeys \
+  --hidden-import ai_screenshot_assistant.capture.blackout \
+  --hidden-import ai_screenshot_assistant.ui.capture_guard \
+  --hidden-import ai_screenshot_assistant.ui.wheel_guard \
+  --hidden-import ai_screenshot_assistant.ai.prompt \
   --hidden-import ai_screenshot_assistant.capture.health \
   --hidden-import ai_screenshot_assistant.capture.repair \
   --hidden-import openpyxl \
@@ -85,6 +98,10 @@ fi
 
 echo "== 写入 Info.plist 权限说明 =="
 PLIST="$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${APP_VERSION}" "$PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${APP_VERSION}" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${APP_VERSION}" "$PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${APP_VERSION}" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :NSHighResolutionCapable true" "$PLIST" 2>/dev/null || \
   /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :NSSupportsAutomaticGraphicsSwitching bool true" "$PLIST" 2>/dev/null || true
@@ -106,5 +123,6 @@ echo
 echo "完成（${ARCH}）："
 echo "  App: $ROOT/dist/QQMusic.app"
 echo "  Zip: $ROOT/dist/${ZIP_NAME}"
+echo "  版本：${APP_VERSION}"
 echo "首次运行：右键 App → 打开；随后在「系统设置 → 隐私与安全性」里允许"
 echo "  屏幕录制（截图）与 辅助功能（鼠标手势 / 全局快捷键）。"

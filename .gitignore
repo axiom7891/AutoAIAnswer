@@ -10,3 +10,6 @@ dist/
 build/
 *.spec
 .DS_Store
+
+docs/_bidong_src/
+docs/_bidong_ui_strings.txt

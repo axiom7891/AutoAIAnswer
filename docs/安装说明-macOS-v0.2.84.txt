@@ -1,0 +1,44 @@
+QQMusic macOS 版 安装说明（v0.2.84）
+========================================
+文件：QQMusic-macOS-arm64-v0.2.84.zip
+适用：Apple Silicon（M1/M2/M3/M4），macOS 12 及以上
+说明：Windows 上不能打出 .app，本包由 GitHub Actions（macos-14）或 Mac 上的 build_macos.sh 生成。
+
+一、安装
+1. 把 zip 传到 Mac（AirDrop / OneDrive / U 盘都行）。
+   ★ 一定要在 Mac 上解压；在 Windows 上解压会丢符号链接和执行权限，App 打不开。
+2. 双击解压，得到 QQMusic.app，拖进「应用程序」。
+3. 第一次打开：Finder 里右键 QQMusic.app → 打开 → 再点「打开」。
+
+二、授权（不做这一步截图会是黑的）
+4. 系统设置 → 隐私与安全性 → 屏幕录制：勾选 QQMusic。
+5. 系统设置 → 隐私与安全性 → 辅助功能：勾选 QQMusic。
+6. ⌘Q 完全退出，再重新打开。
+
+三、怎么用
+- 左键长按 2 秒：框选题目；右键长按 2 秒：截整屏；Control + 左键长按：截整屏。
+- 鼠标中键长按 1 秒：开关「自动截全屏」。
+- Alt+Z：显示 / 隐藏悬浮字幕。
+- 模型：豆包 / OpenRouter（含 Gemini 3.1 Pro）/ Google 官方直连 / DeepSeek；也可填「自定义模型 ID」。
+- 答案格式：模型卡片里可选「答案+解析 / 只要答案 / 只要选项字母 / 只要第几个」。
+- 手机端：与 Mac 同一 WiFi，扫控制台二维码（或输入控制台显示的地址，端口被占用时会自动用 8001 起）。
+
+四、常见问题
+- 提示「已损坏，无法打开」：
+  xattr -dr com.apple.quarantine /Applications/QQMusic.app
+- 截图全黑 / 空白：没给「屏幕录制」权限；授权后重启 App。
+- 鼠标手势、Alt+Z 没反应：没给「辅助功能」权限。
+- 手机连不上：同一 WiFi、关 VPN、防火墙放行实际端口（8000 或自动回退的 8001–8009）。
+- Intel Mac：此包是 arm64；在 Actions 手动触发并勾选 intel，或在 Intel Mac 上执行 ./build_macos.sh。
+
+五、macOS 与 Windows 的差别
+- macOS 没有：解决黑屏、Alt+F / Alt+G、左键双击 / 三连击、捕获排除自愈。
+- macOS 有：截图、字幕（sharingType 排除录制）、手机端、题库、Google 直连、自定义模型、答案格式。
+
+六、Intel Mac 怎么办
+- 之前发的包是 arm64（M 系列专用）。现在构建流程已支持 Intel：
+  打 v* 标签时会同时产出 QQMusic-macOS-x86_64-v<版本>.zip；
+  也可以在 Actions 页面手动运行，勾选 intel。
+- Intel 版要求在 Intel Mac 上运行（macOS 12 及以上）；下载后同样拖进「应用程序」，
+  右键 → 打开，并授权「屏幕录制」「辅助功能」。
+- 如果 Actions 提示没有 Intel 构建机，把手动触发里的 intel_runner 改成 macos-13 再试。

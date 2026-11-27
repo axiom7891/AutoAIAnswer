@@ -22,7 +22,7 @@ from ai_screenshot_assistant.ai.models import (
     PROVIDER_LABELS,
     resolve_model_choice,
 )
-from ai_screenshot_assistant.ai.prompt import VISION_PROMPT
+from ai_screenshot_assistant.ai.prompt import VISION_PROMPT, answer_format_suffix
 from ai_screenshot_assistant.core.conversation import cap_conversation_memory
 
 _QUESTION_HEADING = re.compile(r"【第\d+题】")
@@ -225,6 +225,9 @@ class VisionClient:
             cancel_token.raise_if_cancelled()
         if not self.provider.api_key:
             raise RuntimeError(f"{self.provider.name} API Key 不能为空")
+        if self._is_google():
+            yield from self._analyze_google_stream(png_images, user_text, conversation, cancel_token)
+            return
         prompt = _build_user_prompt(user_text, conversation, self.provider.system_prompt)
         images = [prepare_image_for_ai(png_bytes) for png_bytes in png_images]
         payload = self._request_payload(prompt, images)
@@ -263,6 +266,82 @@ class VisionClient:
                     delta = self._extract_delta(data)
                     if delta:
                         yield delta
+            finally:
+                if cancel_token is not None:
+                    cancel_token.detach_response(response)
+
+
+    # ---------------- Google Gemini 直连 ----------------
+
+    def _is_google(self) -> bool:
+        return "google" in self.provider.name.lower()
+
+    def _google_url(self, stream: bool) -> str:
+        base = (self.provider.base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+        model = self.provider.model or "gemini-3.1-pro"
+        action = ":streamGenerateContent?alt=sse&key=" if stream else ":generateContent?key="
+        return f"{base}/models/{model}{action}{self.provider.api_key}"
+
+    def _google_payload(self, prompt: str, images: list[tuple[bytes, str]]) -> dict[str, Any]:
+        parts: list[dict[str, Any]] = [{"text": prompt}]
+        for image_bytes, mime_type in images:
+            parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64.b64encode(image_bytes).decode("ascii"),
+                    }
+                }
+            )
+        return {
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096},
+        }
+
+    def _analyze_google_stream(
+        self,
+        png_images: list[bytes],
+        user_text: str | None = None,
+        conversation: list[dict[str, str]] | None = None,
+        cancel_token: CancellationToken | None = None,
+    ) -> Iterator[str]:
+        prompt = _build_user_prompt(user_text, conversation, self.provider.system_prompt)
+        images = [prepare_image_for_ai(png_bytes) for png_bytes in png_images]
+        payload = self._google_payload(prompt, images)
+        with requests.post(
+            self._google_url(True),
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            stream=True,
+            timeout=self.provider.timeout_seconds,
+            verify=False,
+        ) as response:
+            if cancel_token is not None:
+                cancel_token.attach_response(response)
+            try:
+                if response.status_code in {400, 403, 404, 422}:
+                    raise ModelUnavailableError(
+                        f"Google 模型不可用（HTTP {response.status_code}，{self.provider.model}），"
+                        "请检查模型名或 Key 权限"
+                    )
+                try:
+                    response.raise_for_status()
+                except requests.HTTPError as exc:
+                    raise self._friendly_http_error(exc) from exc
+                for raw_line in response.iter_lines(chunk_size=1, decode_unicode=False):
+                    if cancel_token is not None:
+                        cancel_token.raise_if_cancelled()
+                    if not raw_line:
+                        continue
+                    line = raw_line.decode("utf-8", errors="replace")
+                    if not line.startswith("data: "):
+                        continue
+                    data = line.removeprefix("data: ").strip()
+                    if data == "[DONE]":
+                        break
+                    text = _extract_google_text(data)
+                    if text:
+                        yield text
             finally:
                 if cancel_token is not None:
                     cancel_token.detach_response(response)
@@ -355,7 +434,7 @@ def _build_user_prompt(
     conversation: list[dict[str, str]] | None,
     system_prompt: str = VISION_PROMPT,
 ) -> str:
-    parts = [system_prompt.strip() or VISION_PROMPT]
+    parts = [(system_prompt.strip() or VISION_PROMPT) + answer_format_suffix()]
     history = _format_conversation(conversation or [])
     if history:
         parts.append(
@@ -455,6 +534,20 @@ def _format_conversation(conversation: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+
+def _extract_google_text(data: str) -> str:
+    try:
+        payload = json.loads(data)
+    except Exception:
+        return ""
+    candidates = payload.get("candidates") if isinstance(payload, dict) else None
+    if not candidates:
+        return ""
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    texts = [str(part.get("text") or "") for part in parts if isinstance(part, dict)]
+    return "".join(texts)
+
 class FailoverVisionClient:
     """Routes a selected Chinese vision provider, with a one-shot 402 failover."""
 
@@ -467,6 +560,8 @@ class FailoverVisionClient:
         on_provider_changed: Callable[[str], None] | None = None,
         model_tier: str = DEFAULT_MODEL_TIER,
         doubao: ProviderConfig | None = None,
+        google: ProviderConfig | None = None,
+        custom_model: str = "",
     ) -> None:
         self.deepseek = VisionClient(deepseek)
         self.openrouter = VisionClient(openrouter)
@@ -479,10 +574,21 @@ class FailoverVisionClient:
                 model=DOUBAO_VISION_MODEL,
             )
         )
+        self.google = VisionClient(
+            google
+            or ProviderConfig(
+                name="Google",
+                api_key="",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+                model="gemini-3.1-pro",
+            )
+        )
+        self.custom_model = str(custom_model or "")
         self.on_provider_changed = on_provider_changed or (lambda _name: None)
         self._deepseek_has_key = self._has_key(self.deepseek)
         self._openrouter_has_key = self._has_key(self.openrouter)
         self._doubao_has_key = self._has_key(self.doubao)
+        self._google_has_key = self._has_key(self.google)
         self.current_provider = self._initial_provider()
         self.model_choice = self.apply_model_tier(model_tier)
 
@@ -518,6 +624,7 @@ class FailoverVisionClient:
             "openrouter": self._openrouter_has_key,
             "deepseek": self._deepseek_has_key,
             "doubao": self._doubao_has_key,
+            "google": self._google_has_key,
         }.get(name, False)
 
     def _client_for(self, name: str) -> VisionClient:
@@ -525,6 +632,7 @@ class FailoverVisionClient:
             "openrouter": self.openrouter,
             "deepseek": self.deepseek,
             "doubao": self.doubao,
+            "google": self.google,
         }[name]
 
     def _switch_to_default_route(self) -> bool:
@@ -544,6 +652,8 @@ class FailoverVisionClient:
             return "deepseek"
         if self._doubao_has_key:
             return "doubao"
+        if self._google_has_key:
+            return "google"
         return "none"
 
     def current_model_id(self) -> str:
@@ -553,6 +663,8 @@ class FailoverVisionClient:
             provider = getattr(self.deepseek, "provider", None)
         elif self.current_provider == "doubao":
             provider = getattr(self.doubao, "provider", None)
+        elif self.current_provider == "google":
+            provider = getattr(self.google, "provider", None)
         else:
             provider = None
         return str(getattr(provider, "model", "") or "")
@@ -567,6 +679,8 @@ class FailoverVisionClient:
             has_deepseek=self._deepseek_has_key,
             has_openrouter=self._openrouter_has_key,
             has_doubao=self._doubao_has_key,
+            has_google=self._google_has_key,
+            custom_model=self.custom_model,
         )
         deepseek_provider = getattr(self.deepseek, "provider", None)
         openrouter_provider = getattr(self.openrouter, "provider", None)
@@ -577,6 +691,9 @@ class FailoverVisionClient:
             self.openrouter = VisionClient(replace(openrouter_provider, model=choice.openrouter_model))
         if isinstance(doubao_provider, ProviderConfig):
             self.doubao = VisionClient(replace(doubao_provider, model=choice.doubao_model))
+        google_provider = getattr(self.google, "provider", None)
+        if isinstance(google_provider, ProviderConfig) and choice.provider == "google":
+            self.google = VisionClient(replace(google_provider, model=choice.model or "gemini-3.1-pro"))
         previous = self.current_provider
         self.current_provider = choice.provider
         self.model_choice = choice
@@ -602,8 +719,8 @@ class FailoverVisionClient:
         conversation: list[dict[str, str]] | None = None,
         cancel_token: CancellationToken | None = None,
     ) -> Iterator[str]:
-        if not self._deepseek_has_key and not self._openrouter_has_key and not self._doubao_has_key:
-            raise RuntimeError("请至少填写 DeepSeek、OpenRouter 或豆包其中一把 API Key")
+        if not any((self._deepseek_has_key, self._openrouter_has_key, self._doubao_has_key, self._google_has_key)):
+            raise RuntimeError("请至少填写 DeepSeek、OpenRouter、豆包或 Google 其中一把 API Key")
         if self.current_provider == "none":
             raise RuntimeError("当前路线未配置 Key")
         try:

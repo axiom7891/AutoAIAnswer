@@ -1,4 +1,4 @@
-"""macOS 辅助快捷键：Ctrl+Alt+O 开关字幕、鼠标中键长按 1 秒 开关自动截屏。
+"""macOS 辅助快捷键：Alt+Z 开关字幕、鼠标中键长按 1 秒 / 左键双击 截屏。
 
 Windows 走 ``CtrlScreenshotListener``（pynput 键盘监听）和 ``MouseRoiListener`` 的
 中键钩子；macOS 没有 Windows 那套全局钩子，这里统一用 pynput 的全局监听实现同样的
@@ -13,6 +13,7 @@ import time
 
 _CTRL_NAMES = {"ctrl", "ctrl_l", "ctrl_r"}
 _ALT_NAMES = {"alt", "alt_l", "alt_r", "alt_gr"}
+_Z_KEYS = {"z", "ω", "Ω", "ž"}
 
 
 class MacHotkeyListener:
@@ -46,7 +47,8 @@ class MacHotkeyListener:
         name = self._key_name(key)
         with self._lock:
             self._pressed.add(name)
-            combo = name == "o" and bool(self._pressed & _CTRL_NAMES) and bool(self._pressed & _ALT_NAMES)
+            # Alt+Z：Option 组合在 macOS 上可能给出 Ω 之类的字符，一起认
+            combo = name in _Z_KEYS and bool(self._pressed & _ALT_NAMES)
             if not combo or self._overlay_fired:
                 return
             self._overlay_fired = True
@@ -57,7 +59,7 @@ class MacHotkeyListener:
         name = self._key_name(key)
         with self._lock:
             self._pressed.discard(name)
-            if name == "o" or name in _CTRL_NAMES or name in _ALT_NAMES:
+            if name in _Z_KEYS or name in _CTRL_NAMES or name in _ALT_NAMES:
                 self._overlay_fired = False
 
     def handle_click(self, button: object, pressed: bool) -> None:

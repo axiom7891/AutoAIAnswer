@@ -20,30 +20,47 @@ class FakeButton:
         self.name = name
 
 
-def test_ctrl_alt_o_toggles_once() -> None:
+def test_alt_z_toggles_once() -> None:
     toggles: list[bool] = []
     listener = MacHotkeyListener(on_overlay_toggle=lambda: toggles.append(True))
 
-    listener.handle_press(FakeKey(name="ctrl"))
     listener.handle_press(FakeKey(name="alt"))
-    listener.handle_press(FakeKey(char="o"))
-    listener.handle_press(FakeKey(char="o"))  # 自动重复不重复触发
+    listener.handle_press(FakeKey(char="z"))
+    listener.handle_press(FakeKey(char="z"))  # 自动重复不重复触发
     assert toggles == [True]
 
-    listener.handle_release(FakeKey(char="o"))
+    listener.handle_release(FakeKey(char="z"))
     listener.handle_release(FakeKey(name="alt"))
-    listener.handle_release(FakeKey(name="ctrl"))
-    listener.handle_press(FakeKey(name="ctrl"))
     listener.handle_press(FakeKey(name="alt"))
-    listener.handle_press(FakeKey(char="o"))
+    listener.handle_press(FakeKey(char="z"))
     assert toggles == [True, True]
 
 
-def test_ctrl_o_without_alt_does_nothing() -> None:
+def test_option_z_character_is_also_accepted() -> None:
+    toggles: list[bool] = []
+    listener = MacHotkeyListener(on_overlay_toggle=lambda: toggles.append(True))
+
+    listener.handle_press(FakeKey(name="alt"))
+    listener.handle_press(FakeKey(char="Ω"))
+
+    assert toggles == [True]
+
+
+def test_plain_z_without_alt_does_nothing() -> None:
+    toggles: list[bool] = []
+    listener = MacHotkeyListener(on_overlay_toggle=lambda: toggles.append(True))
+
+    listener.handle_press(FakeKey(char="z"))
+
+    assert toggles == []
+
+
+def test_ctrl_alt_o_no_longer_fires() -> None:
     toggles: list[bool] = []
     listener = MacHotkeyListener(on_overlay_toggle=lambda: toggles.append(True))
 
     listener.handle_press(FakeKey(name="ctrl"))
+    listener.handle_press(FakeKey(name="alt"))
     listener.handle_press(FakeKey(char="o"))
 
     assert toggles == []

@@ -1,6 +1,10 @@
 import sys
 
 import pytest
+
+if sys.platform != "win32":
+    pytest.skip("仅 Windows 可运行", allow_module_level=True)
+
 from PySide6.QtWidgets import QMainWindow
 
 from ai_screenshot_assistant.ui.native_capture import apply_window_capture_exclusion

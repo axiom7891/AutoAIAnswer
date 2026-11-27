@@ -106,17 +106,18 @@
     "openrouter-deepseek": "openrouter-qwen-plus"
   };
   const knownRoutes = {
-    "doubao-seed-2-0-mini": "豆包 Mini / doubao-seed-2-0-mini-260428（最快 / 准确一般）",
-    "doubao-seed-2-0-lite": "豆包 Lite / doubao-seed-2-0-lite-260428（较快 / 准确中等）",
-    "doubao-seed-2-1-turbo": "豆包 Turbo / doubao-seed-2-1-turbo-260628（快 / 准确较好）",
-    "doubao-seed-2-1-pro": "豆包 Pro / doubao-seed-2-1-pro-260915（最准 / 较慢）",
-    "openrouter-qwen-235b": "OpenRouter / qwen/qwen3-vl-235b-a22b-instruct（图像理解 / 本次首字约9秒）",
-    "openrouter-qwen-27b": "OpenRouter / qwen/qwen3.8-27b（图文理解 / 本次首字约3.4秒）",
-    "openrouter-qwen-flash": "OpenRouter / qwen/qwen3.8-flash（通用视觉 / 本次首字约4.7秒）",
-    "openrouter-qwen-plus": "OpenRouter Qwen Plus / qwen/qwen3.6-plus（图文问答 / 本次首字约2.8秒）",
-    "openrouter-glm": "OpenRouter GLM / z-ai/glm-4.6v（视觉问答 / 本次首字约3.1秒）",
-    "openrouter-minimax": "OpenRouter MiniMax / minimax/minimax-m3（多模态 / 本次首字约3.2秒）",
-    "deepseek-flash": "DeepSeek 官方 / deepseek-flash（快 / 准确一般）"
+    "doubao-seed-2-0-mini": "豆包 Mini / doubao-seed-2-0-mini-260428",
+    "doubao-seed-2-0-lite": "豆包 Lite / doubao-seed-2-0-lite-260428",
+    "doubao-seed-2-1-turbo": "豆包 Turbo / doubao-seed-2-1-turbo-260628",
+    "doubao-seed-2-1-pro": "豆包 Pro / doubao-seed-2-1-pro-260915",
+    "openrouter-qwen-235b": "OpenRouter / qwen/qwen3-vl-235b-a22b-instruct",
+    "openrouter-qwen-27b": "OpenRouter / qwen/qwen3.8-27b",
+    "openrouter-qwen-flash": "OpenRouter / qwen/qwen3.8-flash",
+    "openrouter-qwen-plus": "OpenRouter Qwen Plus / qwen/qwen3.6-plus",
+    "openrouter-glm": "OpenRouter GLM / z-ai/glm-4.6v",
+    "openrouter-gemini-31-pro": "OpenRouter Gemini 3.1 Pro / google/gemini-3.1-pro",
+    "openrouter-minimax": "OpenRouter MiniMax / minimax/minimax-m3",
+    "deepseek-flash": "DeepSeek 官方 / deepseek-flash"
   };
   let currentTier = normalizeRoute(localStorage.getItem(modelTierKey) || "openrouter-qwen-235b");
   const maxScreenshots = 5;

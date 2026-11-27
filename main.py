@@ -80,6 +80,8 @@ def main() -> int:
         if settings.embedded_backend or settings.backend_url == "auto":
             backend = EmbeddedBackend(settings.backend_port)
             backend_url = backend.start()
+            if backend.port != settings.backend_port:
+                print(f"固定端口 {settings.backend_port} 被占用，本地服务改用 {backend.port}")
         window = MainWindow(backend_url=backend_url)
         window.show()
         return app.exec()
@@ -88,7 +90,9 @@ def main() -> int:
         QMessageBox.critical(
             None,
             "QQMusic 启动失败",
-            f"无法启动固定端口 {settings.backend_port}。请确认没有旧进程占用该端口。\n\n{exc}",
+            f"无法启动本地服务（已尝试 {settings.backend_port}–{settings.backend_port + 9}）。\n"
+            "请先结束旧的 QQMusic 进程（任务管理器 / 托盘右键退出），或检查这些端口是否被其它软件占用。\n\n"
+            f"{exc}",
         )
         return 1
     finally:
